@@ -201,7 +201,7 @@ export default function Home() {
   const [gameState, setGameState] = useState<"setup" | "phase1" | "phase2" | "ended">("setup");
   const [winnerFaction, setWinnerFaction] = useState<"survivors" | "devils" | null>(null);
   const [simPlayers, setSimPlayers] = useState<Player[]>([
-    { id: 0, name: "You (Survivor)", role: "human", bp: 6, items: ["magnifying-glass", "cigarettes", "handsaw", "coca"], isExposed: false, isDead: false, hasSpiked: false, skipNext: false, isBot: false },
+    { id: 0, name: "You", role: "human", bp: 6, items: ["magnifying-glass", "cigarettes", "handsaw", "coca"], isExposed: false, isDead: false, hasSpiked: false, skipNext: false, isBot: false },
     { id: 1, name: "Alistair", role: "devil", bp: 6, items: ["handsaw", "cigarettes", "inverter"], isExposed: false, isDead: false, hasSpiked: false, skipNext: false, isBot: true, aiStyle: "aggressive" },
     { id: 2, name: "Beatrice", role: "human", bp: 6, items: ["magnifying-glass", "handcuffs", "burner-phone"], isExposed: false, isDead: false, hasSpiked: false, skipNext: false, isBot: true, aiStyle: "logical" },
     { id: 3, name: "Damien", role: "devil", bp: 6, items: ["adrenaline", "expired-medicine"], isExposed: false, isDead: false, hasSpiked: false, skipNext: false, isBot: true, aiStyle: "manipulative" },
