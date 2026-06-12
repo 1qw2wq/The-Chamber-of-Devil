@@ -1,0 +1,6 @@
+{
+  "name": "The Chamber of Devil",
+  "description": "An immersive digital companion, rule oracle, and solo simulator for the gothic tabletop social deduction game, The Chamber of Devil.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
