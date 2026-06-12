@@ -349,7 +349,7 @@ export default function Home() {
     setUserRole(finalRoles[0]);
 
     const startingPlayers: Player[] = [
-      { id: 0, name: "You (Survivor)", role: finalRoles[0], bp: 6, items: getRandomItems(4), isExposed: finalRoles[0] === "devil", isDead: false, hasSpiked: false, skipNext: false, isBot: false },
+      { id: 0, name: "You", role: finalRoles[0], bp: 6, items: getRandomItems(4), isExposed: finalRoles[0] === "devil", isDead: false, hasSpiked: false, skipNext: false, isBot: false },
       { id: 1, name: "Alistair", role: finalRoles[1], bp: 6, items: getRandomItems(4), isExposed: false, isDead: false, hasSpiked: false, skipNext: false, isBot: true, aiStyle: "aggressive" },
       { id: 2, name: "Beatrice", role: finalRoles[2], bp: 6, items: getRandomItems(4), isExposed: false, isDead: false, hasSpiked: false, skipNext: false, isBot: true, aiStyle: "logical" },
       { id: 3, name: "Damien", role: finalRoles[3], bp: 6, items: getRandomItems(4), isExposed: false, isDead: false, hasSpiked: false, skipNext: false, isBot: true, aiStyle: "manipulative" },
@@ -875,7 +875,7 @@ export default function Home() {
     // Clear adrenaline choosing state
     setUserAdrenalinePending(null);
 
-    addSimLog(`✨ You (Survivor) utilized: Adrenaline 💉`);
+    addSimLog(`✨ You utilized: Adrenaline 💉`);
     addSimLog(`💉 Adrenaline surge! Stole ${GAME_ITEMS.find(i => i.id === stolenItem)?.name || stolenItem} from ${victim.name} and played it instantly.`);
     triggerAudio("heal");
 
