@@ -263,6 +263,34 @@ export default function Home() {
   const handsawActiveRef = useRef(handsawActive);
   const botActingRef = useRef(false);
 
+  // Master host state ref to avoid rebuilding sync interval continuously
+  const hostStateRef = useRef<any>(null);
+  hostStateRef.current = {
+    activeTab,
+    gameState,
+    winnerFaction,
+    simPlayers,
+    gunDeck,
+    revealedBulletCount,
+    expendedBullets,
+    simLogs,
+    turnIndex,
+    peekingTopCard,
+    burnerPhoneMessage,
+    inspectedIndex,
+    botActingId,
+    botActionText,
+    revolving,
+    handsawActive,
+    screenFlash,
+    shakeScreen,
+    showMuzzleFlash,
+    activeShot,
+    lastShotResult,
+    activeItemEffect,
+    simRoundCount,
+  };
+
   useEffect(() => { simPlayersRef.current = simPlayers; }, [simPlayers]);
   useEffect(() => { gunDeckRef.current = gunDeck; }, [gunDeck]);
   useEffect(() => { turnIndexRef.current = turnIndex; }, [turnIndex]);
@@ -476,7 +504,7 @@ export default function Home() {
     setSimPlayersSync(startingPlayers);
 
     const totalBullets = 7;
-    const liveBulletsCount = getPureRandom() > 0.5 ? 3 : 4;
+    const liveBulletsCount = Math.floor(getPureRandom() * 6) + 1; // Random 1 to 6 live bullets
     const blankBulletsCount = totalBullets - liveBulletsCount;
     const newDeck: ("live" | "blank")[] = [];
     for (let i = 0; i < liveBulletsCount; i++) newDeck.push("live");
@@ -520,39 +548,24 @@ export default function Home() {
   useEffect(() => {
     if (multiplayerMode !== "host" || !roomId) return;
 
+    let isSyncing = false;
     const interval = setInterval(async () => {
+      if (isSyncing) return;
+      isSyncing = true;
       try {
+        const stateToSync = hostStateRef.current;
+        if (!stateToSync) {
+          isSyncing = false;
+          return;
+        }
+
         const res = await fetch("/api/rooms", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             action: "sync_state",
             roomId,
-            gameState: {
-              activeTab,
-              gameState,
-              winnerFaction,
-              simPlayers,
-              gunDeck,
-              revealedBulletCount,
-              expendedBullets,
-              simLogs,
-              turnIndex,
-              peekingTopCard,
-              burnerPhoneMessage,
-              inspectedIndex,
-              botActingId,
-              botActionText,
-              revolving,
-              handsawActive,
-              screenFlash,
-              shakeScreen,
-              showMuzzleFlash,
-              activeShot,
-              lastShotResult,
-              activeItemEffect,
-              simRoundCount,
-            }
+            gameState: stateToSync
           })
         });
         const data = await res.json();
@@ -575,17 +588,13 @@ export default function Home() {
         }
       } catch (err) {
         console.error("Host sync error:", err);
+      } finally {
+        isSyncing = false;
       }
-    }, 600);
+    }, 350);
 
     return () => clearInterval(interval);
-  }, [
-    multiplayerMode, roomId, activeTab, gameState, winnerFaction, simPlayers, gunDeck, 
-    revealedBulletCount, expendedBullets, simLogs, turnIndex, peekingTopCard, 
-    burnerPhoneMessage, inspectedIndex, botActingId, botActionText, revolving, 
-    handsawActive, screenFlash, shakeScreen, showMuzzleFlash, activeShot, 
-    lastShotResult, activeItemEffect, simRoundCount
-  ]);
+  }, [multiplayerMode, roomId]);
 
   // Synchronize Guest State from Server
   const prevActiveShotRef = useRef<any>(null);
@@ -595,7 +604,10 @@ export default function Home() {
   useEffect(() => {
     if (multiplayerMode !== "guest" || !roomId) return;
 
+    let isPulling = false;
     const interval = setInterval(async () => {
+      if (isPulling) return;
+      isPulling = true;
       try {
         const res = await fetch("/api/rooms", {
           method: "POST",
@@ -664,11 +676,13 @@ export default function Home() {
         }
       } catch (err) {
         console.error("Guest sync error:", err);
+      } finally {
+        isPulling = false;
       }
-    }, 600);
+    }, 350);
 
     return () => clearInterval(interval);
-  }, [multiplayerMode, roomId]);
+  }, [multiplayerMode, roomId, guestId]);
 
   // --- TAB 2: COMPANION TRACKER STATE ---
   const [compPlayers, setCompPlayers] = useState<{ name: string; bp: number; isDevil: boolean; spiked: boolean; handcuffed: boolean; dead: boolean }[]>([
@@ -733,7 +747,7 @@ export default function Home() {
     setSimPlayersSync(startingPlayers);
 
     const totalBullets = 7;
-    const liveBulletsCount = getPureRandom() > 0.5 ? 3 : 4;
+    const liveBulletsCount = Math.floor(getPureRandom() * 6) + 1; // Random 1 to 6 live bullets
     const blankBulletsCount = totalBullets - liveBulletsCount;
     const newDeck: ("live" | "blank")[] = [];
     for (let i = 0; i < liveBulletsCount; i++) newDeck.push("live");
@@ -1187,7 +1201,7 @@ export default function Home() {
       addSimLog("☠️ SUDDEN DEATH: Cigarettes and Expired Medicine cards fail to trigger!");
     }
 
-    const liveBulletsCount = getPureRandom() > 0.5 ? 3 : 4;
+    const liveBulletsCount = Math.floor(getPureRandom() * 6) + 1; // Random 1 to 6 live bullets
     const blankBulletsCount = 7 - liveBulletsCount;
     const newDeck: ("live" | "blank")[] = [];
     for (let i = 0; i < liveBulletsCount; i++) newDeck.push("live");
@@ -1337,7 +1351,7 @@ export default function Home() {
     switch (itemId) {
       case "magnifying-glass": {
         const bullet = gunDeckRef.current[0];
-        if (playerId === 0) {
+        if (!user.isBot) {
           setPeekingTopCard(bullet);
           addSimLog(`🔍 PEAK SHROUD: First chamber card contains a ${bullet.toUpperCase()} shell.`);
           setActiveItemEffect(prev => prev ? { ...prev, outcome: bullet } : null);
@@ -1360,7 +1374,7 @@ export default function Home() {
           setCylinderRotationAngle(prev => prev + 360 - 360 / 7);
           setGunDeckSync(prev => prev.slice(1));
           setExpendedBullets(prev => [...prev, { type: disc, action: "discarded" }]);
-          if (playerId === 0) {
+          if (!user.isBot) {
             addSimLog(`🥤 Coca discarded top shell. Peek revealed it was ${disc.toUpperCase()}.`);
             setActiveItemEffect(prev => prev ? { ...prev, outcome: disc } : null);
           } else {
@@ -1415,7 +1429,7 @@ export default function Home() {
           const checkIdx = diceRoll - 1 < gunDeckRef.current.length ? diceRoll - 1 : gunDeckRef.current.length - 1;
           const bulletName = gunDeckRef.current[checkIdx];
           const msg = `The chamber slot #${checkIdx + 1} contains a sturdy ${bulletName.toUpperCase()} shell.`;
-          if (playerId === 0) {
+          if (!user.isBot) {
             setBurnerPhoneMessage(msg);
             setInspectedIndex(checkIdx);
             setActiveItemEffect(prev => prev ? { ...prev, outcome: `Slot #${checkIdx + 1}: ${bulletName.toUpperCase()}` } : null);
@@ -2320,12 +2334,14 @@ export default function Home() {
                       {Array.from({ length: 5 }).map((_, seatIdx) => {
                         const human = lobbyPlayers.find(p => p.id === seatIdx);
                         const isMe = (multiplayerMode === "guest" && guestId === seatIdx) || (multiplayerMode === "host" && seatIdx === 0);
+                        const isOnline = human && (!human.lastActive || Date.now() - human.lastActive < 4000);
+                        
                         return (
                           <div 
                             key={seatIdx} 
                             className={`rounded-lg p-2 text-center border text-xs flex flex-col justify-between h-20 transition-all ${
                               human 
-                                ? "bg-[#0b1411] border-emerald-900 text-emerald-300" 
+                                ? (isOnline ? "bg-[#0b1411] border-emerald-950 text-emerald-300" : "bg-[#180a0a] border-red-950 text-red-400 opacity-90") 
                                 : "bg-[#0a0709] border-red-950/40 text-[#cca025]/40 opacity-75"
                             }`}
                           >
@@ -2333,8 +2349,27 @@ export default function Home() {
                             <span className="truncate font-bold font-sans text-[10.5px] leading-none px-0.5 mt-1 block">
                               {human ? human.name : "Vacant Bot"}
                             </span>
-                            <span className="text-[9.5px] leading-none text-zinc-400 mb-0.5 block">
-                              {isMe ? "👉 You" : (human ? "Guest" : "AI")}
+                            <span className="text-[9.5px] leading-none text-zinc-400 mb-0.5 block flex items-center justify-center gap-1">
+                              {isMe ? (
+                                <>
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                                  <span>👉 You</span>
+                                </>
+                              ) : human ? (
+                                isOnline ? (
+                                  <>
+                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                                    <span>Guest</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-ping" />
+                                    <span className="text-rose-400 font-semibold">Disconnected</span>
+                                  </>
+                                )
+                              ) : (
+                                <span>AI Bot</span>
+                              )}
                             </span>
                           </div>
                         );
@@ -2662,14 +2697,14 @@ export default function Home() {
                                   )}
 
                                   {/* Hover Tooltip/Tooltip info if peeked */}
-                                  {isNext && peekingTopCard && (
+                                  {isNext && peekingTopCard && turnIndex === localPlayerId && (
                                     <div className="absolute -bottom-8 bg-neutral-900 border border-amber-600 rounded px-1.5 py-0.5 text-[8px] tracking-tighter text-amber-400 uppercase z-40 whitespace-nowrap">
                                       Peek: {peekingTopCard}
                                     </div>
                                   )}
                                   
                                   {/* Highlight inspected bullet from phone */}
-                                  {isInspected && burnerPhoneMessage && (
+                                  {isInspected && burnerPhoneMessage && turnIndex === localPlayerId && (
                                     <div className="absolute -bottom-8 bg-neutral-900 border border-blue-500 rounded px-1.5 py-0.5 text-[8px] tracking-tighter text-blue-400 uppercase z-40 font-semibold whitespace-nowrap">
                                       Inspected: {bulletType}
                                     </div>
@@ -2685,7 +2720,7 @@ export default function Home() {
                   </div>
 
                   {/* PEeking Overlay Alerts */}
-                  {peekingTopCard && (
+                  {peekingTopCard && turnIndex === localPlayerId && (
                     <motion.div 
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
@@ -2707,7 +2742,7 @@ export default function Home() {
                     </motion.div>
                   )}
 
-                  {burnerPhoneMessage && (
+                  {burnerPhoneMessage && turnIndex === localPlayerId && (
                     <motion.div 
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
@@ -2785,10 +2820,26 @@ export default function Home() {
                             }`}
                           >
                             <div className="space-y-2">
-                              <div className="flex justify-between items-start">
-                                <span className={`font-cinzel text-xs font-bold truncate max-w-[80%] ${isActive && !player.isDead ? "text-[#cca025]" : "text-white"}`}>
-                                  {player.name}
-                                </span>
+                              <div className="flex justify-between items-center">
+                                <div className="flex items-center gap-1.5 max-w-[70%]">
+                                  {multiplayerMode !== "single" && (
+                                    (() => {
+                                      const lobbyP = lobbyPlayers.find(lp => lp.id === player.id);
+                                      if (lobbyP && !player.isBot) {
+                                        const isOnline = !lobbyP.lastActive || Date.now() - lobbyP.lastActive < 4000;
+                                        return (
+                                          <div className={`w-2 h-2 rounded-full ring-1 ${isOnline ? "bg-emerald-500 ring-emerald-500/30 animate-pulse" : "bg-rose-600 ring-rose-500/30 animate-ping"}`} title={isOnline ? "Online" : "Disconnected"} />
+                                        );
+                                      } else if (player.isBot) {
+                                        return <div className="w-2 h-2 rounded-full bg-blue-500/40 ring-1 ring-blue-500/20" title="AI Subroutine" />;
+                                      }
+                                      return null;
+                                    })()
+                                  )}
+                                  <span className={`font-cinzel text-xs font-bold truncate ${isActive && !player.isDead ? "text-[#cca025]" : "text-white"}`}>
+                                    {player.name}
+                                  </span>
+                                </div>
                                 {player.skipNext && (
                                   <span className="text-[9px] bg-red-950 text-red-400 border border-red-900 px-1.5 rounded animate-pulse">LOCK</span>
                                 )}

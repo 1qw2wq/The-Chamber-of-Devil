@@ -6,6 +6,7 @@ interface RoomPlayer {
   isBot: boolean;
   role: "human" | "devil";
   isHost: boolean;
+  lastActive?: number;
 }
 
 interface PendingAction {
@@ -92,16 +93,22 @@ export async function POST(req: NextRequest) {
       }
 
       // Check for duplicate name
-      const cleanName = (playerName || `Survivor #${room.players.length}`).trim();
-      const nameExists = room.players.some(p => p.name.toLowerCase() === cleanName.toLowerCase());
-      const finalName = nameExists ? `${cleanName} (${room.players.length})` : cleanName;
+      const cleanName = (playerName || "").trim();
+      if (!cleanName) {
+        return NextResponse.json({ success: false, error: "The shadows reject an empty name. Proclaim yourself." }, { status: 400 });
+      }
+      const nameExists = room.players.some(p => p.name.trim().toLowerCase() === cleanName.toLowerCase());
+      if (nameExists) {
+        return NextResponse.json({ success: false, error: "This survivor name has already been claimed at this table. Choose another name." }, { status: 400 });
+      }
 
       const newPlayer: RoomPlayer = {
         id: room.players.length,
-        name: finalName,
+        name: cleanName,
         isBot: false,
         role: "human", // default, host will randomise when starting
         isHost: false,
+        lastActive: Date.now(),
       };
 
       room.players.push(newPlayer);
@@ -126,6 +133,12 @@ export async function POST(req: NextRequest) {
       room.status = gameState.gameState === "setup" ? "lobby" : "playing";
       room.lastUpdated = Date.now();
 
+      // Update host connection heartbeat
+      room.players = room.players.map(p => {
+        if (p.id === 0) return { ...p, lastActive: Date.now() };
+        return p;
+      });
+
       // Retrieve guest pending actions and then drain the queue
       const actions = [...room.pendingActions];
       room.pendingActions = [];
@@ -144,6 +157,12 @@ export async function POST(req: NextRequest) {
       }
       const room = roomsCache.get(roomId);
       if (!room) return NextResponse.json({ success: false, error: "Room not found" }, { status: 404 });
+
+      // Update guest heartbeat on action
+      room.players = room.players.map(p => {
+        if (p.id === playerId) return { ...p, lastActive: Date.now() };
+        return p;
+      });
 
       const newAction: PendingAction = {
         playerId,
@@ -165,24 +184,42 @@ export async function POST(req: NextRequest) {
       const room = roomsCache.get(roomId);
       if (!room) return NextResponse.json({ success: false, error: "Room not found" }, { status: 404 });
 
+      // Update guest heartbeat on state pull
+      room.players = room.players.map(p => {
+        if (p.id === playerId) return { ...p, lastActive: Date.now() };
+        return p;
+      });
+
       let returnedGameState = room.hostAuthoritativeState;
-      if (returnedGameState && returnedGameState.simPlayers) {
+      if (returnedGameState) {
         // Deep copy the game state to prevent unintended reference mutation in Cache
         const parsedState = JSON.parse(JSON.stringify(returnedGameState));
-        parsedState.simPlayers = parsedState.simPlayers.map((p: any) => {
-          const isMe = playerId !== undefined && p.id === playerId;
-          const isExposed = p.isExposed;
-          const isEnded = parsedState.gameState === "ended";
+        
+        if (parsedState.simPlayers) {
+          parsedState.simPlayers = parsedState.simPlayers.map((p: any) => {
+            const isMe = playerId !== undefined && p.id === playerId;
+            const isExposed = p.isExposed;
+            const isEnded = parsedState.gameState === "ended";
 
-          if (isMe || isExposed || isEnded) {
-            return p;
-          } else {
-            return {
-              ...p,
-              role: "hidden"
-            };
-          }
-        });
+            if (isMe || isExposed || isEnded) {
+              return p;
+            } else {
+              return {
+                ...p,
+                role: "hidden"
+              };
+            }
+          });
+        }
+
+        // Mask peeking/phone secrets if it is NOT the requesting guest's turn
+        const isMyTurn = playerId !== undefined && parsedState.turnIndex === playerId;
+        if (!isMyTurn) {
+          parsedState.peekingTopCard = null;
+          parsedState.burnerPhoneMessage = null;
+          parsedState.inspectedIndex = null;
+        }
+
         returnedGameState = parsedState;
       }
 
