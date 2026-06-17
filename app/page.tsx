@@ -197,11 +197,40 @@ export default function Home() {
   const [activeTab, setActiveTab] = useState<"simulator" | "companion" | "rulebook" | "oracle">("simulator");
   const [isMuted, setIsMuted] = useState(false);
 
+  // --- MULTIPLAYER ROOM STATES ---
+  const [multiplayerMode, setMultiplayerMode] = useState<"single" | "host" | "guest">("single");
+  const [roomId, setRoomId] = useState<string>("");
+  const [playerName, setPlayerName] = useState<string>("");
+  const [guestId, setGuestId] = useState<number>(0);
+  const [lobbyPlayers, setLobbyPlayers] = useState<any[]>([]);
+  const [roomError, setRoomError] = useState<string>("");
+  const [loadingRoom, setLoadingRoom] = useState<boolean>(false);
+  const [joinCodeInput, setJoinCodeInput] = useState<string>("");
+
+  // --- ADDITIONAL IMMERSIVE STATES ---
+  const [botActingId, setBotActingId] = useState<number | null>(null);
+  const [botActionText, setBotActionText] = useState("");
+  const [screenFlash, setScreenFlash] = useState<null | "live" | "blank" | "heal">(null);
+  const [shakeScreen, setShakeScreen] = useState<"live" | "blank" | null>(null);
+  const [showMuzzleFlash, setShowMuzzleFlash] = useState<"live" | "blank" | null>(null);
+  const [hoveredItemDescriptor, setHoveredItemDescriptor] = useState<{ name: string; desc: string; rule: string } | null>(null);
+  const [activeShot, setActiveShot] = useState<{ shooter: string; target: string; type: "live" | "blank"; dmg: number } | null>(null);
+  const [lastShotResult, setLastShotResult] = useState<string | null>(null);
+  const [revolving, setRevolving] = useState(false);
+  const [cylinderRotationAngle, setCylinderRotationAngle] = useState(360 / 7);
+  const [activeItemEffect, setActiveItemEffect] = useState<{
+    itemId: string;
+    playerName: string;
+    itemName: string;
+    icon: string;
+    outcome?: string;
+  } | null>(null);
+
   // --- TAB 1: INTERACTIVE SIMULATOR STATE ---
   const [gameState, setGameState] = useState<"setup" | "phase1" | "phase2" | "ended">("setup");
   const [winnerFaction, setWinnerFaction] = useState<"survivors" | "devils" | null>(null);
   const [simPlayers, setSimPlayers] = useState<Player[]>([
-    { id: 0, name: "You", role: "human", bp: 6, items: ["magnifying-glass", "cigarettes", "handsaw", "coca"], isExposed: false, isDead: false, hasSpiked: false, skipNext: false, isBot: false },
+    { id: 0, name: "You (Survivor)", role: "human", bp: 6, items: ["magnifying-glass", "cigarettes", "handsaw", "coca"], isExposed: false, isDead: false, hasSpiked: false, skipNext: false, isBot: false },
     { id: 1, name: "Alistair", role: "devil", bp: 6, items: ["handsaw", "cigarettes", "inverter"], isExposed: false, isDead: false, hasSpiked: false, skipNext: false, isBot: true, aiStyle: "aggressive" },
     { id: 2, name: "Beatrice", role: "human", bp: 6, items: ["magnifying-glass", "handcuffs", "burner-phone"], isExposed: false, isDead: false, hasSpiked: false, skipNext: false, isBot: true, aiStyle: "logical" },
     { id: 3, name: "Damien", role: "devil", bp: 6, items: ["adrenaline", "expired-medicine"], isExposed: false, isDead: false, hasSpiked: false, skipNext: false, isBot: true, aiStyle: "manipulative" },
@@ -277,24 +306,368 @@ export default function Home() {
     setSimRoundCount(next);
   };
 
-  // --- ADDITIONAL IMMERSIVE STATES ---
-  const [botActingId, setBotActingId] = useState<number | null>(null);
-  const [botActionText, setBotActionText] = useState("");
-  const [screenFlash, setScreenFlash] = useState<null | "live" | "blank" | "heal">(null);
-  const [shakeScreen, setShakeScreen] = useState<"live" | "blank" | null>(null);
-  const [showMuzzleFlash, setShowMuzzleFlash] = useState<"live" | "blank" | null>(null);
-  const [hoveredItemDescriptor, setHoveredItemDescriptor] = useState<{ name: string; desc: string; rule: string } | null>(null);
-  const [activeShot, setActiveShot] = useState<{ shooter: string; target: string; type: "live" | "blank"; dmg: number } | null>(null);
-  const [lastShotResult, setLastShotResult] = useState<string | null>(null);
-  const [revolving, setRevolving] = useState(false);
-  const [cylinderRotationAngle, setCylinderRotationAngle] = useState(360 / 7);
-  const [activeItemEffect, setActiveItemEffect] = useState<{
-    itemId: string;
-    playerName: string;
-    itemName: string;
-    icon: string;
-    outcome?: string;
-  } | null>(null);
+  // --- MULTIPLAYER CORE COORDINATORS ---
+  const localPlayerId = (multiplayerMode === "guest") ? guestId : 0;
+
+  const createHostRoom = async () => {
+    if (!playerName.trim()) {
+      setRoomError("You must proclaim your name to the shadows.");
+      return;
+    }
+    setRoomError("");
+    setLoadingRoom(true);
+    try {
+      const res = await fetch("/api/rooms", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "create", playerName: playerName.trim() })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setRoomId(data.roomId);
+        setMultiplayerMode("host");
+        setGuestId(0);
+        setLobbyPlayers(data.players);
+      } else {
+        setRoomError(data.error || "Failed to summon network room.");
+      }
+    } catch (err) {
+      setRoomError("Transient error reaching the Grimoire repository.");
+      console.error(err);
+    } finally {
+      setLoadingRoom(false);
+    }
+  };
+
+  const joinGuestRoom = async (codeStr: string) => {
+    if (!playerName.trim()) {
+      setRoomError("You must proclaim your name to the shadows.");
+      return;
+    }
+    if (!codeStr || codeStr.length < 8) {
+      setRoomError("Chamber codes require exactly 8 digits.");
+      return;
+    }
+    setRoomError("");
+    setLoadingRoom(true);
+    try {
+      const res = await fetch("/api/rooms", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "join", roomId: codeStr.trim(), playerName: playerName.trim() })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setRoomId(data.roomId);
+        setMultiplayerMode("guest");
+        setGuestId(data.playerId);
+        setLobbyPlayers(data.players);
+      } else {
+        setRoomError(data.error || "The table bounds could not be joined.");
+      }
+    } catch (err) {
+      setRoomError("Transient error reaching the Table repository.");
+      console.error(err);
+    } finally {
+      setLoadingRoom(false);
+    }
+  };
+
+  const leaveRoom = () => {
+    setMultiplayerMode("single");
+    setRoomId("");
+    setGuestId(0);
+    setLobbyPlayers([]);
+    setRoomError("");
+    setGameStateSync("setup");
+  };
+
+  const dispatchGameAction = async (type: "shoot" | "use_item", payload: { targetId?: number, itemId?: string }) => {
+    if (multiplayerMode === "guest") {
+      try {
+        await fetch("/api/rooms", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "guest_action",
+            roomId,
+            playerId: guestId,
+            guestAction: {
+              type,
+              itemId: payload.itemId,
+              targetId: payload.targetId,
+            }
+          })
+        });
+      } catch (err) {
+        console.error("Guest action dispatch error:", err);
+      }
+    } else {
+      if (type === "shoot") {
+        shootPlayerSimulator(0, payload.targetId!);
+      } else if (type === "use_item") {
+        executeItemOnSimulator(0, payload.itemId!, payload.targetId);
+      }
+    }
+  };
+
+  const initializeMultiplayerSimulation = () => {
+    const roles: ("human" | "devil")[] = ["human", "human", "human", "devil", "devil"];
+    for (let i = roles.length - 1; i > 0; i--) {
+      const j = Math.floor(getPureRandom() * (i + 1));
+      [roles[i], roles[j]] = [roles[j], roles[i]];
+    }
+
+    const finalRoles = [...roles];
+    setUserRole(finalRoles[0]);
+
+    const botNames = ["Alistair", "Beatrice", "Damien", "Cassandra"];
+    const botStyles: ("aggressive" | "logical" | "manipulative" | "cautious")[] = ["aggressive", "logical", "manipulative", "cautious"];
+    
+    const startingPlayers: Player[] = [];
+
+    // Seat 0: Host
+    startingPlayers.push({
+      id: 0,
+      name: playerName.trim() || "Host Survivor",
+      role: finalRoles[0],
+      bp: 6,
+      items: getRandomItems(4),
+      isExposed: finalRoles[0] === "devil",
+      isDead: false,
+      hasSpiked: false,
+      skipNext: false,
+      isBot: false
+    });
+
+    // Seats 1 to 4: Joined players or AI bots
+    for (let seat = 1; seat <= 4; seat++) {
+      const joinedPlayer = lobbyPlayers.find(p => p.id === seat);
+      if (joinedPlayer) {
+        startingPlayers.push({
+          id: seat,
+          name: joinedPlayer.name,
+          role: finalRoles[seat],
+          bp: 6,
+          items: getRandomItems(4),
+          isExposed: false,
+          isDead: false,
+          hasSpiked: false,
+          skipNext: false,
+          isBot: false,
+        });
+      } else {
+        startingPlayers.push({
+          id: seat,
+          name: `${botNames[seat - 1]} (AI)`,
+          role: finalRoles[seat],
+          bp: 6,
+          items: getRandomItems(4),
+          isExposed: false,
+          isDead: false,
+          hasSpiked: false,
+          skipNext: false,
+          isBot: true,
+          aiStyle: botStyles[seat - 1],
+        });
+      }
+    }
+
+    setSimPlayersSync(startingPlayers);
+
+    const totalBullets = 7;
+    const liveBulletsCount = getPureRandom() > 0.5 ? 3 : 4;
+    const blankBulletsCount = totalBullets - liveBulletsCount;
+    const newDeck: ("live" | "blank")[] = [];
+    for (let i = 0; i < liveBulletsCount; i++) newDeck.push("live");
+    for (let i = 0; i < blankBulletsCount; i++) newDeck.push("blank");
+    
+    for (let i = newDeck.length - 1; i > 0; i--) {
+      const j = Math.floor(getPureRandom() * (i + 1));
+      [newDeck[i], newDeck[j]] = [newDeck[j], newDeck[i]];
+    }
+
+    setCylinderRotationAngle(prev => {
+      const targetZeroAngle = 360 / 7;
+      const currentFullRotations = Math.floor(prev / 360) * 360;
+      return currentFullRotations + 1440 + targetZeroAngle;
+    });
+
+    setGunDeckSync(newDeck);
+    setRevealedBulletCount({ live: liveBulletsCount, blank: blankBulletsCount });
+
+    setTurnIndexSync(0);
+    setSimRoundCountSync(1);
+    setHandsawActiveSync(false);
+    setPeekingTopCard(null);
+    setBurnerPhoneMessage(null);
+    setInspectedIndex(null);
+    setAdrenalineSelection(null);
+    setUserHandcuffsPending(false);
+    setUserAdrenalinePending(null);
+    setBotCaterDialogue(null);
+    setLastShotResult(null);
+    setWinnerFaction(null);
+
+    setGameStateSync("phase1");
+    setSimLogs([
+      `🕯️ The Shrouded Oak Table Ceremony commences. Roles are sealed.`,
+      `📢 Loader Manifest is announced: "Exactly ${liveBulletsCount} Live Gold shells, and ${blankBulletsCount} Silver Blanks of lead."`
+    ]);
+  };
+
+  // Synchronize Host State to Server
+  useEffect(() => {
+    if (multiplayerMode !== "host" || !roomId) return;
+
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch("/api/rooms", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "sync_state",
+            roomId,
+            gameState: {
+              activeTab,
+              gameState,
+              winnerFaction,
+              simPlayers,
+              gunDeck,
+              revealedBulletCount,
+              expendedBullets,
+              simLogs,
+              turnIndex,
+              peekingTopCard,
+              burnerPhoneMessage,
+              inspectedIndex,
+              botActingId,
+              botActionText,
+              revolving,
+              handsawActive,
+              screenFlash,
+              shakeScreen,
+              showMuzzleFlash,
+              activeShot,
+              lastShotResult,
+              activeItemEffect,
+              simRoundCount,
+            }
+          })
+        });
+        const data = await res.json();
+        if (data.success) {
+          if (data.players) {
+            setLobbyPlayers(data.players);
+          }
+          if (data.pendingActions && data.pendingActions.length > 0) {
+            for (const act of data.pendingActions) {
+              const activePlayer = simPlayersRef.current[turnIndexRef.current];
+              if (act.playerId === activePlayer.id) {
+                if (act.type === "shoot") {
+                  shootPlayerSimulator(activePlayer.id, act.targetId);
+                } else if (act.type === "use_item") {
+                  executeItemOnSimulator(activePlayer.id, act.itemId, act.targetId);
+                }
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.error("Host sync error:", err);
+      }
+    }, 600);
+
+    return () => clearInterval(interval);
+  }, [
+    multiplayerMode, roomId, activeTab, gameState, winnerFaction, simPlayers, gunDeck, 
+    revealedBulletCount, expendedBullets, simLogs, turnIndex, peekingTopCard, 
+    burnerPhoneMessage, inspectedIndex, botActingId, botActionText, revolving, 
+    handsawActive, screenFlash, shakeScreen, showMuzzleFlash, activeShot, 
+    lastShotResult, activeItemEffect, simRoundCount
+  ]);
+
+  // Synchronize Guest State from Server
+  const prevActiveShotRef = useRef<any>(null);
+  const prevActiveItemRef = useRef<any>(null);
+  const prevTurnIndexRef = useRef<number>(0);
+  
+  useEffect(() => {
+    if (multiplayerMode !== "guest" || !roomId) return;
+
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch("/api/rooms", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "pull_state",
+            roomId,
+          })
+        });
+        const data = await res.json();
+        if (data.success) {
+          if (data.players) {
+            setLobbyPlayers(data.players);
+          }
+          if (data.gameState) {
+            const hState = data.gameState;
+            
+            if (hState.activeShot && !prevActiveShotRef.current) {
+              if (hState.activeShot.type === "live") {
+                triggerAudio("gunshot");
+              } else {
+                triggerAudio("click");
+              }
+            }
+            prevActiveShotRef.current = hState.activeShot;
+
+            if (hState.activeItemEffect && !prevActiveItemRef.current) {
+              const item = hState.activeItemEffect.itemId;
+              if (item === "cigarettes" || item === "expired-medicine") {
+                triggerAudio("heal");
+              } else if (item === "handcuffs") {
+                triggerAudio("chains");
+              }
+            }
+            prevActiveItemRef.current = hState.activeItemEffect;
+
+            if (hState.turnIndex !== prevTurnIndexRef.current) {
+              triggerAudio("reload");
+            }
+            prevTurnIndexRef.current = hState.turnIndex;
+
+            setGameState(hState.gameState);
+            setWinnerFaction(hState.winnerFaction);
+            setSimPlayers(hState.simPlayers);
+            setGunDeck(hState.gunDeck);
+            setRevealedBulletCount(hState.revealedBulletCount);
+            setExpendedBullets(hState.expendedBullets);
+            setSimLogs(hState.simLogs);
+            setTurnIndex(hState.turnIndex);
+            setPeekingTopCard(hState.peekingTopCard);
+            setBurnerPhoneMessage(hState.burnerPhoneMessage);
+            setInspectedIndex(hState.inspectedIndex);
+            setBotActingId(hState.botActingId);
+            setBotActionText(hState.botActionText);
+            setRevolving(hState.revolving);
+            setHandsawActive(hState.handsawActive);
+            setScreenFlash(hState.screenFlash);
+            setShakeScreen(hState.shakeScreen);
+            setShowMuzzleFlash(hState.showMuzzleFlash);
+            setActiveShot(hState.activeShot);
+            setLastShotResult(hState.lastShotResult);
+            setActiveItemEffect(hState.activeItemEffect);
+            setSimRoundCount(hState.simRoundCount);
+          }
+        }
+      } catch (err) {
+        console.error("Guest sync error:", err);
+      }
+    }, 600);
+
+    return () => clearInterval(interval);
+  }, [multiplayerMode, roomId]);
 
   // --- TAB 2: COMPANION TRACKER STATE ---
   const [compPlayers, setCompPlayers] = useState<{ name: string; bp: number; isDevil: boolean; spiked: boolean; handcuffed: boolean; dead: boolean }[]>([
@@ -325,9 +698,9 @@ export default function Home() {
   // Helper utility
   const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-  const triggerAudio = (sound: 'gunshot' | 'click' | 'reload' | 'heal' | 'spike' | 'chains') => {
+  function triggerAudio(sound: 'gunshot' | 'click' | 'reload' | 'heal' | 'spike' | 'chains') {
     if (!isMuted) playSound(sound);
-  };
+  }
 
   const addSimLog = (msg: string) => {
     setSimLogs(prev => [msg, ...prev.slice(0, 35)]);
@@ -349,7 +722,7 @@ export default function Home() {
     setUserRole(finalRoles[0]);
 
     const startingPlayers: Player[] = [
-      { id: 0, name: "You", role: finalRoles[0], bp: 6, items: getRandomItems(4), isExposed: finalRoles[0] === "devil", isDead: false, hasSpiked: false, skipNext: false, isBot: false },
+      { id: 0, name: "You (Survivor)", role: finalRoles[0], bp: 6, items: getRandomItems(4), isExposed: finalRoles[0] === "devil", isDead: false, hasSpiked: false, skipNext: false, isBot: false },
       { id: 1, name: "Alistair", role: finalRoles[1], bp: 6, items: getRandomItems(4), isExposed: false, isDead: false, hasSpiked: false, skipNext: false, isBot: true, aiStyle: "aggressive" },
       { id: 2, name: "Beatrice", role: finalRoles[2], bp: 6, items: getRandomItems(4), isExposed: false, isDead: false, hasSpiked: false, skipNext: false, isBot: true, aiStyle: "logical" },
       { id: 3, name: "Damien", role: finalRoles[3], bp: 6, items: getRandomItems(4), isExposed: false, isDead: false, hasSpiked: false, skipNext: false, isBot: true, aiStyle: "manipulative" },
@@ -648,11 +1021,17 @@ export default function Home() {
     if (livingOpponents.length === 0) return null;
 
     if (bot.role === "devil") {
+      // Devil AI: seek out and attack humans, avoid fellow Devils
       const humans = livingOpponents.filter(p => p.role === "human");
       if (humans.length > 0) return humans[Math.floor(getPureRandom() * humans.length)];
     } else {
+      // Human AI: attack exposed Devils as absolute priority
       const exposedDevils = livingOpponents.filter(p => p.role === "devil" && p.isExposed);
-      if (exposedDevils.length > 0) return exposedDevils[0];
+      if (exposedDevils.length > 0) return exposedDevils[Math.floor(getPureRandom() * exposedDevils.length)];
+
+      // Avoid attacking players shown/exposed as Humans
+      const nonExposedHumans = livingOpponents.filter(p => !(p.role === "human" && p.isExposed));
+      if (nonExposedHumans.length > 0) return nonExposedHumans[Math.floor(getPureRandom() * nonExposedHumans.length)];
     }
     return livingOpponents[Math.floor(getPureRandom() * livingOpponents.length)];
   };
@@ -676,7 +1055,7 @@ export default function Home() {
   };
 
   // --- RESOLVE SHOOT ACTIONS ---
-  const shootPlayerSimulator = async (shooterId: number, targetId: number): Promise<"live" | "blank"> => {
+  async function shootPlayerSimulator(shooterId: number, targetId: number): Promise<"live" | "blank"> {
     const currentDeck = gunDeckRef.current;
     if (currentDeck.length === 0) {
       addSimLog("❌ Cylinder is spent. Cylinder needs a reload.");
@@ -785,7 +1164,7 @@ export default function Home() {
     }
 
     return currentBullet;
-  };
+  }
 
   const resolveNextTurnIndex = () => {
     const latestPlayers = simPlayersRef.current;
@@ -875,7 +1254,7 @@ export default function Home() {
     // Clear adrenaline choosing state
     setUserAdrenalinePending(null);
 
-    addSimLog(`✨ You utilized: Adrenaline 💉`);
+    addSimLog(`✨ You (Survivor) utilized: Adrenaline 💉`);
     addSimLog(`💉 Adrenaline surge! Stole ${GAME_ITEMS.find(i => i.id === stolenItem)?.name || stolenItem} from ${victim.name} and played it instantly.`);
     triggerAudio("heal");
 
@@ -884,7 +1263,7 @@ export default function Home() {
   };
 
   // --- PLAY ITEM ENGINE ---
-  const executeItemOnSimulator = (playerId: number, itemId: string, additionalTargetId?: number) => {
+  function executeItemOnSimulator(playerId: number, itemId: string, additionalTargetId?: number) {
     // Use interactive selection interceptors for Player 0 (You)
     if (playerId === 0) {
       if (itemId === "handcuffs" && additionalTargetId === undefined) {
@@ -1106,7 +1485,7 @@ export default function Home() {
         }
         break;
     }
-  };
+  }
 
   // --- EFFECT THAT OBSERVES TURNS AND CALLS BOT ACTIONS SEQUENTIALLY ---
   useEffect(() => {
@@ -1217,7 +1596,7 @@ export default function Home() {
     if (gameState === "setup") {
       setOracleInput("What is the best setup strategy for first turn?");
     } else {
-      const u = simPlayers[0];
+      const u = simPlayers[localPlayerId];
       setOracleInput(`Current hand: [${u.items.join(", ")}]. Next shell peeking: ${peekingTopCard || "unknown"}. Which item must I deploy to maximize survival?`);
     }
     setActiveTab("oracle");
@@ -1898,60 +2277,228 @@ export default function Home() {
             
             {/* INITIAL CONFIGURATION SCREEN */}
             {gameState === "setup" && (
-              <div className="max-w-2xl mx-auto rounded-2xl border border-[#21232c] bg-[#0c1015] p-8 text-center space-y-6 shadow-2xl relative overflow-hidden">
-                <div className="absolute top-0 right-0 p-4 opacity-5">
-                  <Flame size={150} className="text-red-600" />
-                </div>
-                
-                <h3 className="font-cinzel text-2xl text-[#cca025] font-bold tracking-wider">The Shrouded oak Table</h3>
-                <p className="text-sm text-gray-400 max-w-md mx-auto leading-relaxed">
-                  The Chamber contains exactly 5 chairs. Shrouded under the shadow of fate, 3 Survivor Humans and 2 Infiltrator Devils occupy these seats. Your alignment is dealt completely at random and revealed only to you once the simulation begins.
-                </p>
+              roomId !== "" ? (
+                <div className="max-w-xl mx-auto rounded-2xl border-2 border-amber-900 bg-[#07090e] p-8 text-center space-y-6 shadow-2xl relative overflow-hidden">
+                  <div className="absolute top-0 right-0 p-4 opacity-5">
+                    <Flame size={150} className="text-red-500" />
+                  </div>
 
-                {/* Visual Representation of 5 Mystical Face-Down Seats */}
-                <div className="flex justify-center flex-wrap md:flex-nowrap items-center gap-3 py-4 max-w-md mx-auto">
-                  {Array.from({ length: 5 }).map((_, idx) => (
-                    <motion.div
-                      key={idx}
-                      className="w-16 h-24 rounded-lg bg-gradient-to-br from-[#12131a] via-[#1c1d29] to-[#0d0e14] border-2 border-[#2c2d3c] flex flex-col items-center justify-center p-2 relative shadow-lg group cursor-default"
-                      animate={{
-                        y: [0, -4, 0],
-                        borderColor: ["#2c2d3c", "#cca025", "#2c2d3c"],
-                      }}
-                      transition={{
-                        duration: 3,
-                        repeat: Infinity,
-                        delay: idx * 0.3,
-                        ease: "easeInOut"
-                      }}
+                  <h3 className="font-cinzel text-xl text-[#cca025] font-extrabold tracking-wider animate-pulse">Lobby: The Covenant of Fate</h3>
+                  <p className="text-xs text-neutral-400">
+                    Place your finger on the table. Gather 5 players on this same network to unlock the Chamber cylinders. Missing slots will fall back to smart AI bots.
+                  </p>
+
+                  {/* Room Code Badge */}
+                  <div className="bg-[#0e111a] border border-[#2c2e39] py-4 px-6 rounded-2xl inline-block shadow-lg mx-auto">
+                    <span className="text-[10px] text-zinc-500 uppercase tracking-widest block font-bold mb-1">Chamber Room Code</span>
+                    <div className="flex items-center gap-2 justify-center">
+                      <span className="font-mono text-2xl font-extrabold tracking-widest text-[#cca025]">{roomId}</span>
+                      <button 
+                        onClick={() => {
+                          navigator.clipboard.writeText(roomId);
+                          alert("Room Code copied to clipboard!");
+                        }}
+                        className="text-gray-400 hover:text-white p-1 rounded hover:bg-[#1c2236] text-[11px] cursor-pointer"
+                        title="Copy Room Code"
+                      >
+                        📋 Copy
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Connected Seats Status */}
+                  <div className="bg-[#050608] border border-neutral-900 rounded-xl p-4 text-left space-y-3">
+                    <div className="flex justify-between items-center pb-2 border-b border-neutral-850">
+                      <span className="text-[10px] text-zinc-500 uppercase tracking-widest font-bold">Table Seat Layout</span>
+                      <span className="text-[10px] text-emerald-400 font-bold bg-emerald-950/40 px-2 py-0.5 rounded-full border border-emerald-900/60 font-mono">
+                        {lobbyPlayers.length} / 5 human seats filled
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-5 gap-2 pt-2">
+                      {Array.from({ length: 5 }).map((_, seatIdx) => {
+                        const human = lobbyPlayers.find(p => p.id === seatIdx);
+                        const isMe = (multiplayerMode === "guest" && guestId === seatIdx) || (multiplayerMode === "host" && seatIdx === 0);
+                        return (
+                          <div 
+                            key={seatIdx} 
+                            className={`rounded-lg p-2 text-center border text-xs flex flex-col justify-between h-20 transition-all ${
+                              human 
+                                ? "bg-[#0b1411] border-emerald-900 text-emerald-300" 
+                                : "bg-[#0a0709] border-red-950/40 text-[#cca025]/40 opacity-75"
+                            }`}
+                          >
+                            <span className="text-[9px] text-gray-500 uppercase font-mono block">Seat #{seatIdx + 1}</span>
+                            <span className="truncate font-bold font-sans text-[10.5px] leading-none px-0.5 mt-1 block">
+                              {human ? human.name : "Vacant Bot"}
+                            </span>
+                            <span className="text-[9.5px] leading-none text-zinc-400 mb-0.5 block">
+                              {isMe ? "👉 You" : (human ? "Guest" : "AI")}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Actions */}
+                  <div className="flex gap-3">
+                    <button
+                      onClick={leaveRoom}
+                      className="flex-1 py-3 px-4 rounded-xl border border-[#2c2d3c] bg-[#0c1015] hover:bg-[#1a1c28] text-gray-300 text-xs font-bold uppercase tracking-wider transition-all cursor-pointer"
                     >
-                      <div className="absolute inset-0 bg-radial-gradient from-red-500/10 to-transparent rounded-lg opacity-40" />
-                      <span className="text-[10px] text-zinc-500 font-mono mb-1">Seat</span>
-                      <span className="font-cinzel font-bold text-xs text-[#cca025]">#{idx + 1}</span>
-                      <div className="w-1.5 h-1.5 rounded-full bg-red-600/60 animate-ping mt-1" />
-                    </motion.div>
-                  ))}
-                </div>
+                      Leave Lobby
+                    </button>
 
-                <div className="bg-[#050608] p-4 rounded-xl text-left border border-gray-850">
-                  <h4 className="font-bold text-gray-300 font-cinzel text-xs uppercase tracking-widest mb-2 flex items-center gap-1.5 text-[#cca025]">
-                    <Info size={13} /> Chamber Rules Reference Matrix
-                  </h4>
-                  <ul className="text-[11px] text-gray-400 space-y-1.5 pl-4 list-disc">
-                    <li>The Gun cylinder chambers <strong>exactly 7 randomly-shuffled cartridges</strong>.</li>
-                    <li>If you check yourself with a Blank, <strong>you preserve your turn index</strong>.</li>
-                    <li>Devil players triggering 1 BP auto-spike <strong>recover exactly +2 BP</strong> and stand exposed!</li>
-                    <li>Sudden Death locks in at <strong>Load 4+</strong>, disabling healing items immediately.</li>
-                  </ul>
+                    {multiplayerMode === "host" && (
+                      <button
+                        onClick={initializeMultiplayerSimulation}
+                        className="flex-1 py-3 px-4 rounded-xl bg-red-900 hover:bg-red-800 border-t border-red-500 text-white text-xs font-bold uppercase tracking-wider transition-all shadow-lg flex items-center justify-center gap-1.5 cursor-pointer"
+                      >
+                        <Play size={13} /> Begin Table Ceremony
+                      </button>
+                    )}
+                  </div>
                 </div>
+              ) : (
+                <div className="max-w-2xl mx-auto rounded-2xl border border-[#21232c] bg-[#0c1015] p-8 text-center space-y-6 shadow-2xl relative overflow-hidden">
+                  <div className="absolute top-0 right-0 p-4 opacity-5">
+                    <Flame size={150} className="text-red-600" />
+                  </div>
+                  
+                  <h3 className="font-cinzel text-2xl text-[#cca025] font-bold tracking-wider">The Shrouded oak Table</h3>
+                  <p className="text-sm text-gray-400 max-w-md mx-auto leading-relaxed">
+                    The Chamber contains exactly 5 chairs. Shrouded under the shadow of fate, 3 Survivor Humans and 2 Infiltrator Devils occupy these seats. Choose your run mode to proceed.
+                  </p>
 
-                <button
-                  onClick={initializeSimulation}
-                  className="w-full py-4 rounded-xl bg-red-900 hover:bg-red-800 border-t border-red-500 text-white text-sm font-bold uppercase tracking-widest transition-all flex items-center justify-center gap-2 shadow-lg"
-                >
-                  <Play size={16} /> Enter active dining hall
-                </button>
-              </div>
+                  <div className="flex justify-center bg-[#050608] border border-neutral-900 rounded-xl p-1 max-w-sm mx-auto">
+                    <button
+                      onClick={() => { setMultiplayerMode("single"); setRoomError(""); }}
+                      className={`flex-1 py-2 font-cinzel text-xs uppercase tracking-widest font-bold rounded-lg transition-all cursor-pointer ${
+                        multiplayerMode === "single"
+                          ? "bg-[#1c1e27] text-white border border-[#2a2d39]"
+                          : "text-gray-500 hover:text-gray-300"
+                      }`}
+                    >
+                      🛡️ Solo Run
+                    </button>
+                    <button
+                      onClick={() => { setMultiplayerMode("host"); setRoomError(""); }}
+                      className={`flex-1 py-2 font-cinzel text-xs uppercase tracking-widest font-bold rounded-lg transition-all cursor-pointer ${
+                        multiplayerMode !== "single"
+                          ? "bg-[#1c1e27] text-white border border-[#2a2d39]"
+                          : "text-gray-500 hover:text-gray-300"
+                      }`}
+                    >
+                      🌐 Table Network
+                    </button>
+                  </div>
+
+                  {/* Visual Setup of Seats */}
+                  <div className="flex justify-center flex-wrap md:flex-nowrap items-center gap-3 py-4 max-w-md mx-auto">
+                    {Array.from({ length: 5 }).map((_, idx) => (
+                      <motion.div
+                        key={idx}
+                        className="w-16 h-20 rounded-lg bg-gradient-to-br from-[#12131a] via-[#1c1d29] to-[#0d0e14] border-2 border-[#2c2d3c] flex flex-col items-center justify-center p-2 relative shadow-lg group cursor-default"
+                        animate={{
+                          y: [0, -4, 0],
+                          borderColor: ["#2c2d3c", "#cca025", "#2c2d3c"],
+                        }}
+                        transition={{
+                          duration: 3,
+                          repeat: Infinity,
+                          delay: idx * 0.3,
+                          ease: "easeInOut"
+                        }}
+                      >
+                        <div className="absolute inset-0 bg-radial-gradient from-red-500/10 to-transparent rounded-lg opacity-40" />
+                        <span className="text-[10px] text-zinc-500 font-mono mb-1">Seat</span>
+                        <span className="font-cinzel font-bold text-xs text-[#cca025]">#{idx + 1}</span>
+                      </motion.div>
+                    ))}
+                  </div>
+
+                  {multiplayerMode === "single" ? (
+                    <div className="space-y-4">
+                      <div className="bg-[#050608] p-4 rounded-xl text-left border border-gray-850 max-w-md mx-auto">
+                        <h4 className="font-bold text-gray-300 font-cinzel text-xs uppercase tracking-widest mb-2 flex items-center gap-1.5 text-[#cca025]">
+                          <Info size={13} /> Solo Chamber Guidelines
+                        </h4>
+                        <ul className="text-[11px] text-gray-400 space-y-1.5 pl-4 list-disc font-sans leading-relaxed">
+                          <li>The Gun cylinder chambers <strong>exactly 7 randomly-shuffled cartridges</strong>.</li>
+                          <li>We fill the remaining 4 empty slots with experienced custom AI bots.</li>
+                          <li>Your alignment is dealt randomly and secret.</li>
+                        </ul>
+                      </div>
+
+                      <button
+                        onClick={initializeSimulation}
+                        className="w-full max-w-md py-4 rounded-xl bg-red-900 hover:bg-red-800 border-t border-red-500 text-white text-sm font-bold uppercase tracking-widest transition-all flex items-center justify-center gap-2 shadow-lg mx-auto cursor-pointer"
+                      >
+                        <Play size={16} /> Enter active dining hall
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="space-y-4 max-w-md mx-auto text-left">
+                      <div className="space-y-1">
+                        <label className="text-[10px] text-zinc-400 uppercase tracking-widest font-bold block">Your Proclaimed Survivor Name</label>
+                        <input 
+                          type="text" 
+                          placeholder="e.g. Vance" 
+                          value={playerName} 
+                          onChange={(e) => setPlayerName(e.target.value)}
+                          maxLength={15}
+                          className="w-full bg-[#050608] border border-neutral-800 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-[#cca025]"
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+                        <div className="bg-[#050608]/80 border border-neutral-900 rounded-xl p-4 flex flex-col justify-between">
+                          <div>
+                            <h5 className="font-cinzel text-[11px] font-bold text-[#cca025] mb-1">Host Table</h5>
+                            <p className="text-[10.5px] text-neutral-500 leading-relaxed">Spawn a network room table and get an 8-digit covenant code.</p>
+                          </div>
+                          <button
+                            onClick={createHostRoom}
+                            disabled={loadingRoom}
+                            className="w-full py-2.5 mt-3 rounded-lg bg-amber-950/60 hover:bg-amber-900/80 border border-amber-800/80 text-amber-300 text-xs font-bold uppercase tracking-wider transition-all cursor-pointer"
+                          >
+                            {loadingRoom ? "Summoning..." : "Create Room"}
+                          </button>
+                        </div>
+
+                        <div className="bg-[#050608]/80 border border-neutral-900 rounded-xl p-4 flex flex-col justify-between">
+                          <div>
+                            <h5 className="font-cinzel text-[11px] font-bold text-red-400 mb-1">Join Table</h5>
+                            <p className="text-[10.5px] text-neutral-500 leading-relaxed">Claim a vacancy at a network table using an 8-digit code.</p>
+                            <input 
+                              type="text" 
+                              placeholder="Code (8 digits)" 
+                              value={joinCodeInput} 
+                              onChange={(e) => setJoinCodeInput(e.target.value.replace(/\D/g, "").slice(0, 8))}
+                              maxLength={8}
+                              className="w-full bg-[#08090d] border border-neutral-850 rounded-lg px-2.5 py-1.5 mt-2 text-xs text-white focus:outline-none focus:border-red-500 text-center font-mono tracking-widest"
+                            />
+                          </div>
+                          <button
+                            onClick={() => joinGuestRoom(joinCodeInput)}
+                            disabled={loadingRoom}
+                            className="w-full py-2.5 mt-3 rounded-lg bg-red-950/60 hover:bg-red-900/80 border border-red-900/80 text-red-300 text-xs font-bold uppercase tracking-wider transition-all cursor-pointer"
+                          >
+                            {loadingRoom ? "Joining..." : "Join Table"}
+                          </button>
+                        </div>
+                      </div>
+
+                      {roomError && (
+                        <p className="text-[11px] text-red-500 font-mono text-center font-bold pt-1">
+                          ⚠️ {roomError}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )
             )}
 
             {/* LIVE BOARD SCREEN */}
@@ -2201,7 +2748,7 @@ export default function Home() {
                     <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
                       {simPlayers.map((player) => {
                         const isActive = player.id === turnIndex;
-                        const isUser = player.id === 0;
+                        const isUser = player.id === localPlayerId;
 
                         // Determine EKG color and speed based on HP
                         let pulseColor = "text-emerald-500";
@@ -2281,13 +2828,15 @@ export default function Home() {
 
                               <div className="flex justify-between items-center text-[9px] font-mono pt-1 text-gray-500">
                                 <span>{vitalStatusStr}</span>
-                                {player.id === 0 ? (
+                                {player.id === localPlayerId ? (
                                   <span className={player.role === "devil" ? "text-red-500 font-bold uppercase tracking-tighter" : "text-[#cca025] font-bold uppercase tracking-tighter"}>
                                     Role: {player.role.toUpperCase()}
                                   </span>
                                 ) : (
                                   player.isExposed && (
-                                    <span className="text-red-500 font-bold uppercase tracking-tighter font-serif">Exposed Devil</span>
+                                    <span className={player.role === "devil" ? "text-red-500 font-bold uppercase tracking-tighter font-serif" : "text-emerald-500 font-bold uppercase tracking-tighter font-serif"}>
+                                      Exposed {player.role.toUpperCase()}
+                                    </span>
                                   )
                                 )}
                               </div>
@@ -2342,8 +2891,8 @@ export default function Home() {
                     </div>
                   )}
 
-                  {gameState === "phase2" && turnIndex === 0 && (
-                    simPlayers[0].skipNext ? (
+                  {gameState === "phase2" && turnIndex === localPlayerId && (
+                    simPlayers[localPlayerId].skipNext ? (
                       <motion.div 
                         initial={{ opacity: 0, scale: 0.95 }}
                         animate={{ opacity: 1, scale: 1 }}
@@ -2502,7 +3051,7 @@ export default function Home() {
                           
                           <div className="grid grid-cols-4 gap-3 bg-[#050608]/90 border border-neutral-900 rounded-2xl p-4 shadow-inner max-w-sm sm:max-w-md mx-auto md:mx-0">
                             {Array.from({ length: 8 }).map((_, idx) => {
-                              const item = simPlayers[0].items[idx];
+                              const item = simPlayers[localPlayerId].items[idx];
                               if (item) {
                                 const ref = GAME_ITEMS.find(i => i.id === item)!;
                                 return (
@@ -2513,7 +3062,7 @@ export default function Home() {
                                     onMouseLeave={() => setHoveredItemDescriptor(null)}
                                     onClick={() => {
                                       setHoveredItemDescriptor(null);
-                                      executeItemOnSimulator(0, item);
+                                      dispatchGameAction("use_item", { itemId: item });
                                     }}
                                     className="aspect-square bg-gradient-to-b from-[#0e0f14] to-[#040507] hover:from-[#171923] hover:to-[#080b12] border-2 border-neutral-850 hover:border-amber-500 rounded-2xl relative flex flex-col items-center justify-center p-2 transition-all duration-300 group cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed hover:shadow-[0_0_15px_rgba(245,158,11,0.25)] active:scale-95"
                                   >
@@ -2571,17 +3120,17 @@ export default function Home() {
                         <div className="flex flex-wrap gap-2">
                           <button
                             disabled={revolving}
-                            onClick={() => shootPlayerSimulator(0, 0)}
+                            onClick={() => dispatchGameAction("shoot", { targetId: localPlayerId })}
                             className="bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-800 text-emerald-300 px-5 py-2.5 text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed shadow-md"
                           >
                             <span>👤</span> Shoot Self (Blank preserves turn!)
                           </button>
                           
-                          {simPlayers.filter(p => p.id !== 0 && !p.isDead).map((opponent) => (
+                          {simPlayers.filter(p => p.id !== localPlayerId && !p.isDead).map((opponent) => (
                             <button
                               key={opponent.id}
                               disabled={revolving}
-                              onClick={() => shootPlayerSimulator(0, opponent.id)}
+                              onClick={() => dispatchGameAction("shoot", { targetId: opponent.id })}
                               className="bg-red-950/80 hover:bg-red-900 border border-red-800 text-red-300 px-5 py-2.5 text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed shadow-md"
                             >
                               <span>🔫</span> Aim at {opponent.name}
