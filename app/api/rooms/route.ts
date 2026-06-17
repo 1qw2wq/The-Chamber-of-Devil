@@ -165,11 +165,32 @@ export async function POST(req: NextRequest) {
       const room = roomsCache.get(roomId);
       if (!room) return NextResponse.json({ success: false, error: "Room not found" }, { status: 404 });
 
+      let returnedGameState = room.hostAuthoritativeState;
+      if (returnedGameState && returnedGameState.simPlayers) {
+        // Deep copy the game state to prevent unintended reference mutation in Cache
+        const parsedState = JSON.parse(JSON.stringify(returnedGameState));
+        parsedState.simPlayers = parsedState.simPlayers.map((p: any) => {
+          const isMe = playerId !== undefined && p.id === playerId;
+          const isExposed = p.isExposed;
+          const isEnded = parsedState.gameState === "ended";
+
+          if (isMe || isExposed || isEnded) {
+            return p;
+          } else {
+            return {
+              ...p,
+              role: "hidden"
+            };
+          }
+        });
+        returnedGameState = parsedState;
+      }
+
       return NextResponse.json({
         success: true,
         status: room.status,
         players: room.players,
-        gameState: room.hostAuthoritativeState
+        gameState: returnedGameState
       });
     }
 

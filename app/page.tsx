@@ -603,6 +603,7 @@ export default function Home() {
           body: JSON.stringify({
             action: "pull_state",
             roomId,
+            playerId: guestId,
           })
         });
         const data = await res.json();
@@ -2946,11 +2947,18 @@ export default function Home() {
                             Select which opponent to handcuff. This skips their very next turn action sequence completely.
                           </p>
                           <div className="flex flex-wrap gap-2 pt-1">
-                            {simPlayers.filter(p => p.id !== 0 && !p.isDead).map(opponent => (
+                            {simPlayers.filter(p => p.id !== localPlayerId && !p.isDead).map(opponent => (
                               <button
                                 key={opponent.id}
                                 disabled={opponent.skipNext}
-                                onClick={() => executeItemOnSimulator(0, "handcuffs", opponent.id)}
+                                onClick={() => {
+                                  if (multiplayerMode === "guest") {
+                                    dispatchGameAction("use_item", { itemId: "handcuffs", targetId: opponent.id });
+                                    setUserHandcuffsPending(false);
+                                  } else {
+                                    executeItemOnSimulator(0, "handcuffs", opponent.id);
+                                  }
+                                }}
                                 className={`text-xs font-bold py-2 px-3.5 rounded-xl flex items-center gap-1.5 transition-all ${
                                   opponent.skipNext 
                                     ? "bg-gray-950/20 border border-gray-900 text-gray-600 cursor-not-allowed opacity-50"
@@ -2985,7 +2993,7 @@ export default function Home() {
                                 Choose an opponent from whom you will extract a supply item:
                               </p>
                               <div className="flex flex-wrap gap-2 pt-1">
-                                {simPlayers.filter(p => p.id !== 0 && !p.isDead && p.items.some(it => it !== "adrenaline")).map(opponent => (
+                                {simPlayers.filter(p => p.id !== localPlayerId && !p.isDead && p.items.some(it => it !== "adrenaline")).map(opponent => (
                                   <button
                                     key={opponent.id}
                                     onClick={() => setUserAdrenalinePending({ step: "select-item", targetId: opponent.id })}
