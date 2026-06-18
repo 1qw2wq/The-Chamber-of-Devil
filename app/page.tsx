@@ -926,10 +926,43 @@ export default function Home() {
         const potentialTargets = currentPlayers.filter(p => p.id !== bot.id && !p.isDead && p.items.some(it => it !== "adrenaline"));
         if (canAdrenaline && potentialTargets.length > 0) {
           let score = 1.2;
-          const hasCigAndLowHp = bot.bp <= 3 && potentialTargets.some(p => p.items.includes("cigarettes"));
-          if (hasCigAndLowHp) score += 2.2;
-          if (bot.aiStyle === "manipulative") score += 1.4;
-          choices.push({ id: "adrenaline", score });
+          const hasItem = (itemId: string) => potentialTargets.some(p => p.items.includes(itemId));
+          
+          if (bot.bp <= 3 && (hasItem("cigarettes") || hasItem("expired-medicine"))) {
+            score = Math.max(score, 4.2); // Extremely high priority to steal heal!
+          }
+          if (botKnownTop === "blank" && hasItem("inverter")) {
+            score = Math.max(score, 4.7); // High priority to steal inverter and flip it!
+          }
+          if (botKnownTop === "live" && !bot.items.includes("handsaw") && hasItem("handsaw")) {
+            score = Math.max(score, 4.95); // Absolute priority to steal saw and double the blow!
+          }
+          if (botKnownTop === "unknown" && (hasItem("magnifying-glass") || hasItem("burner-phone"))) {
+            score = Math.max(score, 2.5); // Information gathering surge
+          }
+          if (bot.aiStyle === "manipulative") score += 0.5;
+
+          // Let's identify which victim actually has the item we want!
+          let preferredVictim = potentialTargets[0];
+          let foundCalculated = false;
+          if (bot.bp <= 3) {
+            const v = potentialTargets.find(p => p.items.includes("cigarettes") || p.items.includes("expired-medicine"));
+            if (v) { preferredVictim = v; foundCalculated = true; }
+          }
+          if (!foundCalculated && botKnownTop === "blank") {
+            const v = potentialTargets.find(p => p.items.includes("inverter"));
+            if (v) { preferredVictim = v; foundCalculated = true; }
+          }
+          if (!foundCalculated && botKnownTop === "live" && !bot.items.includes("handsaw")) {
+            const v = potentialTargets.find(p => p.items.includes("handsaw"));
+            if (v) { preferredVictim = v; foundCalculated = true; }
+          }
+          if (!foundCalculated && botKnownTop === "unknown") {
+            const v = potentialTargets.find(p => p.items.includes("magnifying-glass") || p.items.includes("burner-phone"));
+            if (v) { preferredVictim = v; foundCalculated = true; }
+          }
+          
+          choices.push({ id: "adrenaline", score, data: preferredVictim });
         }
 
         // 6. Option: Inverter
@@ -937,7 +970,7 @@ export default function Home() {
         if (canInverter) {
           let score = -999;
           if (botKnownTop === "blank") {
-            score = 3.9;
+            score = 4.8; // High priority: flip to live and shoot!
           } else if (botKnownTop === "unknown") {
             const live = gunDeckRef.current.filter(b => b === "live").length;
             const blank = gunDeckRef.current.filter(b => b === "blank").length;
@@ -967,14 +1000,17 @@ export default function Home() {
         const handcuffsTargetCandidates = currentPlayers.filter(p => p.id !== bot.id && !p.isDead && !p.skipNext);
         const canHandcuffs = bot.items.includes("handcuffs") && handcuffsTargetCandidates.length > 0;
         if (canHandcuffs) {
-          let score = 1.4;
+          let score = 1.8;
           const target = selectBotTarget(bot, handcuffsTargetCandidates);
           if (target) {
             if (target.id === localPlayerId) {
               const userAggression = userMetricsRef.current.handsawPlays + userMetricsRef.current.othersShotsCount;
               if (userAggression >= 2) score += 1.5; // lock down dangerous human!
             }
-            if (bot.aiStyle === "aggressive") score += 0.6;
+            if (botKnownTop === "live") {
+              score += 1.0; // secure handcuffs to prevent escape response!
+            }
+            if (bot.aiStyle === "aggressive") score += 0.5;
             if (bot.aiStyle === "manipulative") score += 0.8;
             choices.push({ id: "handcuffs", score, data: target });
           }
@@ -985,11 +1021,12 @@ export default function Home() {
         if (canHandsaw) {
           let score = -999;
           if (botKnownTop === "live") {
-            score = 4.2;
+            score = 5.0; // Boosted score to saw before firing!
           } else if (botKnownTop === "unknown") {
             const live = gunDeckRef.current.filter(b => b === "live").length;
             const blank = gunDeckRef.current.filter(b => b === "blank").length;
-            if (live >= blank) score = 2.1;
+            if (live >= 4 && blank <= 1) score = 3.8;
+            else if (live > blank) score = 2.1;
             else score = 0.5;
           }
           if (bot.aiStyle === "aggressive") score += 0.8;
@@ -1100,9 +1137,66 @@ export default function Home() {
 
         if (bestChoice.id === "adrenaline") {
           const victim = bestChoice.data || potentialTargets[0];
-          setBotActionText(`${bot.name} injects Adrenaline 💉 to extract an item from ${victim.name}'s hand...`);
-          await sleep(1600);
-          executeItemOnSimulator(bot.id, "adrenaline");
+          
+          // Determine the optimal item to steal from this victim
+          const hasItem = (item: string) => victim.items.includes(item);
+          let stolenItem = victim.items[0];
+          
+          if (bot.bp <= 3) {
+            if (hasItem("cigarettes")) stolenItem = "cigarettes";
+            else if (hasItem("expired-medicine")) stolenItem = "expired-medicine";
+          }
+          if (botKnownTop === "blank" && hasItem("inverter")) stolenItem = "inverter";
+          if ((botKnownTop === "live" || (gunDeckRef.current.filter(b => b === "live").length / Math.max(1, gunDeckRef.current.length)) >= 0.6) && !bot.items.includes("handsaw") && hasItem("handsaw")) stolenItem = "handsaw";
+          if (!victim.skipNext && hasItem("handcuffs")) stolenItem = "handcuffs";
+          if (botKnownTop === "unknown") {
+            if (hasItem("magnifying-glass")) stolenItem = "magnifying-glass";
+            else if (hasItem("burner-phone")) stolenItem = "burner-phone";
+          }
+          if (gunDeckRef.current.filter(b => b === "blank").length > gunDeckRef.current.filter(b => b === "live").length && hasItem("coca")) stolenItem = "coca";
+          
+          // Avoid stealing Adrenaline itself if possible
+          if (stolenItem === "adrenaline") {
+            const possibleItems = victim.items.filter(it => it !== "adrenaline");
+            stolenItem = possibleItems.length > 0 ? possibleItems[0] : "adrenaline";
+          }
+
+          setBotActionText(`${bot.name} injects Adrenaline 💉 to extract ${GAME_ITEMS.find(i => i.id === stolenItem)?.name || stolenItem} directly from ${victim.name}...`);
+          await sleep(1800);
+
+          // Remove Adrenaline from Bot
+          setSimPlayersSync(prev => prev.map(p => {
+            if (p.id === bot.id) {
+              const copy = [...p.items];
+              const idx = copy.indexOf("adrenaline");
+              if (idx > -1) copy.splice(idx, 1);
+              return { ...p, items: copy };
+            }
+            return p;
+          }));
+
+          // Remove stolen item from Victim
+          setSimPlayersSync(prev => prev.map(p => {
+            if (p.id === victim.id) {
+              const copy = [...p.items];
+              const idx = copy.indexOf(stolenItem);
+              if (idx > -1) copy.splice(idx, 1);
+              return { ...p, items: copy };
+            }
+            return p;
+          }));
+
+          // Execute physical item effect and update local mental model of the AI
+          executeItemOnSimulator(bot.id, stolenItem);
+
+          if (stolenItem === "inverter" && botKnownTop === "blank") {
+            botKnownTop = "live";
+          } else if (stolenItem === "coca") {
+            botKnownTop = "unknown";
+          } else if (stolenItem === "magnifying-glass") {
+            botKnownTop = gunDeckRef.current[0] || "unknown";
+          }
+
           await sleep(1500);
           continue;
         }
@@ -1179,6 +1273,7 @@ export default function Home() {
 
         if (shotResult === "blank" && finalTargetId === bot.id) {
           addSimLog(`🤖 ${bot.name} retains their turn after surviving a self-shot Blank.`);
+          botKnownTop = "unknown";
           continue; // keep acting and loop!
         }
 
@@ -1414,10 +1509,11 @@ export default function Home() {
   
   const executeUserAdrenalineSteal = (victimId: number, stolenItem: string) => {
     const victim = simPlayers.find(p => p.id === victimId)!;
+    const localPlayerId = (multiplayerMode === "guest") ? guestId : 0;
 
     // 1. Remove exactly 1 "adrenaline" from User's hand
     setSimPlayersSync(prev => prev.map(p => {
-      if (p.id === 0) {
+      if (p.id === localPlayerId) {
         const idx = p.items.indexOf("adrenaline");
         const newItems = [...p.items];
         if (idx > -1) newItems.splice(idx, 1);
@@ -1440,12 +1536,12 @@ export default function Home() {
     // Clear adrenaline choosing state
     setUserAdrenalinePending(null);
 
-    addSimLog(`✨ You (Survivor) utilized: Adrenaline 💉`);
+    addSimLog(`✨ ${localPlayerId === 0 ? "You (Survivor)" : simPlayers.find(p => p.id === localPlayerId)?.name || "Guest"} utilized: Adrenaline 💉`);
     addSimLog(`💉 Adrenaline surge! Stole ${GAME_ITEMS.find(i => i.id === stolenItem)?.name || stolenItem} from ${victim.name} and played it instantly.`);
     triggerAudio("heal");
 
     // 3. Immediately trigger the stolen item's effect as if User played it!
-    executeItemOnSimulator(0, stolenItem);
+    executeItemOnSimulator(localPlayerId, stolenItem);
   };
 
   // --- PLAY ITEM ENGINE ---
@@ -1649,8 +1745,8 @@ export default function Home() {
       }
 
       case "adrenaline":
-        if (playerId === 0) {
-          const opposition = simPlayersRef.current.filter(p => p.id !== 0 && p.items.length > 0 && !p.isDead);
+        if (playerId === localPlayerId) {
+          const opposition = simPlayersRef.current.filter(p => p.id !== localPlayerId && p.items.length > 0 && !p.isDead);
           if (opposition.length > 0) {
             const first = opposition[0];
             setAdrenalineSelection({ targetId: first.id, items: first.items });
