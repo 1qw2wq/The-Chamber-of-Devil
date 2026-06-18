@@ -1350,6 +1350,13 @@ export default function Home() {
     const updatedDeck = [...currentDeck.slice(1)];
     setGunDeckSync(updatedDeck);
     setExpendedBullets(prev => [...prev, { type: currentBullet, action: "fired" }]);
+    setRevealedBulletCount(prev => {
+      if (currentBullet === "live") {
+        return { ...prev, live: Math.max(0, prev.live - 1) };
+      } else {
+        return { ...prev, blank: Math.max(0, prev.blank - 1) };
+      }
+    });
 
     // Read current players from synchronized ref
     const currentPlayers = simPlayersRef.current;
@@ -1654,6 +1661,13 @@ export default function Home() {
           setCylinderRotationAngle(prev => prev + 360 - 360 / 7);
           setGunDeckSync(prev => prev.slice(1));
           setExpendedBullets(prev => [...prev, { type: disc, action: "discarded" }]);
+          setRevealedBulletCount(prev => {
+            if (disc === "live") {
+              return { ...prev, live: Math.max(0, prev.live - 1) };
+            } else {
+              return { ...prev, blank: Math.max(0, prev.blank - 1) };
+            }
+          });
           if (!user.isBot) {
             addSimLog(`🥤 Coca discarded top shell. Peek revealed it was ${disc.toUpperCase()}.`);
             setActiveItemEffect(prev => prev ? { ...prev, outcome: disc } : null);
@@ -1697,6 +1711,19 @@ export default function Home() {
           const original = gunDeckRef.current[0];
           const inverted = original === "live" ? "blank" : "live";
           setGunDeckSync(prev => [inverted, ...prev.slice(1)]);
+          setRevealedBulletCount(prev => {
+            if (original === "live") {
+              return {
+                live: Math.max(0, prev.live - 1),
+                blank: prev.blank + 1
+              };
+            } else {
+              return {
+                live: prev.live + 1,
+                blank: Math.max(0, prev.blank - 1)
+              };
+            }
+          });
           addSimLog(`🔄 Top card inverted sequentially ${original.toUpperCase()} ↔ ${inverted.toUpperCase()}`);
           triggerAudio("reload");
           setActiveItemEffect(prev => prev ? { ...prev, outcome: `${original.toUpperCase()} ➔ ${inverted.toUpperCase()}` } : null);
