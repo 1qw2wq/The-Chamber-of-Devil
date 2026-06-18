@@ -1157,7 +1157,7 @@ export default function Home() {
           
           // Avoid stealing Adrenaline itself if possible
           if (stolenItem === "adrenaline") {
-            const possibleItems = victim.items.filter(it => it !== "adrenaline");
+            const possibleItems = victim.items.filter((it: string) => it !== "adrenaline");
             stolenItem = possibleItems.length > 0 ? possibleItems[0] : "adrenaline";
           }
 
