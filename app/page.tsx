@@ -172,6 +172,21 @@ function getPureRandom(): number {
   return Math.random();
 }
 
+const EERIE_BOT_NAMES = [
+  "Alistair", "Beatrice", "Damien", "Cassandra", "Vincent", "Rosalie", 
+  "Silas", "Eleanor", "Thaddeus", "Evelyn", "Malachi", "Valerie", 
+  "Julian", "Gideon", "Gwendolyn", "Morrigan", "Lucius", "Vesper"
+];
+
+function getRandomBotNames(count: number): string[] {
+  const shuffled = [...EERIE_BOT_NAMES];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(getPureRandom() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  return shuffled.slice(0, count);
+}
+
 function getRandomItemsOutside(count: number): string[] {
   // Weighted pool where powerful items like Adrenaline are rarer
   const weightedPool = [
@@ -262,6 +277,14 @@ export default function Home() {
   const simRoundCountRef = useRef(simRoundCount);
   const handsawActiveRef = useRef(handsawActive);
   const botActingRef = useRef(false);
+
+  // User Actions Metrics tracking for dynamic AI weights Adaptation
+  const userMetricsRef = useRef({
+    selfShotsCount: 0,
+    othersShotsCount: 0,
+    handsawPlays: 0,
+    healingPlays: 0,
+  });
 
   // Master host state ref to avoid rebuilding sync interval continuously
   const hostStateRef = useRef<any>(null);
@@ -449,7 +472,7 @@ export default function Home() {
     const finalRoles = [...roles];
     setUserRole(finalRoles[0]);
 
-    const botNames = ["Alistair", "Beatrice", "Damien", "Cassandra"];
+    const botNames = getRandomBotNames(4);
     const botStyles: ("aggressive" | "logical" | "manipulative" | "cautious")[] = ["aggressive", "logical", "manipulative", "cautious"];
     
     const startingPlayers: Player[] = [];
@@ -736,12 +759,14 @@ export default function Home() {
     const finalRoles = [...roles];
     setUserRole(finalRoles[0]);
 
+    const names = getRandomBotNames(4);
+
     const startingPlayers: Player[] = [
       { id: 0, name: "You (Survivor)", role: finalRoles[0], bp: 6, items: getRandomItems(4), isExposed: finalRoles[0] === "devil", isDead: false, hasSpiked: false, skipNext: false, isBot: false },
-      { id: 1, name: "Alistair", role: finalRoles[1], bp: 6, items: getRandomItems(4), isExposed: false, isDead: false, hasSpiked: false, skipNext: false, isBot: true, aiStyle: "aggressive" },
-      { id: 2, name: "Beatrice", role: finalRoles[2], bp: 6, items: getRandomItems(4), isExposed: false, isDead: false, hasSpiked: false, skipNext: false, isBot: true, aiStyle: "logical" },
-      { id: 3, name: "Damien", role: finalRoles[3], bp: 6, items: getRandomItems(4), isExposed: false, isDead: false, hasSpiked: false, skipNext: false, isBot: true, aiStyle: "manipulative" },
-      { id: 4, name: "Cassandra", role: finalRoles[4], bp: 6, items: getRandomItems(4), isExposed: false, isDead: false, hasSpiked: false, skipNext: false, isBot: true, aiStyle: "cautious" }
+      { id: 1, name: names[0], role: finalRoles[1], bp: 6, items: getRandomItems(4), isExposed: false, isDead: false, hasSpiked: false, skipNext: false, isBot: true, aiStyle: "aggressive" },
+      { id: 2, name: names[1], role: finalRoles[2], bp: 6, items: getRandomItems(4), isExposed: false, isDead: false, hasSpiked: false, skipNext: false, isBot: true, aiStyle: "logical" },
+      { id: 3, name: names[2], role: finalRoles[3], bp: 6, items: getRandomItems(4), isExposed: false, isDead: false, hasSpiked: false, skipNext: false, isBot: true, aiStyle: "manipulative" },
+      { id: 4, name: names[3], role: finalRoles[4], bp: 6, items: getRandomItems(4), isExposed: false, isDead: false, hasSpiked: false, skipNext: false, isBot: true, aiStyle: "cautious" }
     ];
 
     setSimPlayersSync(startingPlayers);
@@ -844,8 +869,186 @@ export default function Home() {
           continue; 
         }
 
-        // 3. Heal checks
-        if (bot.bp <= 3 && bot.items.includes("cigarettes") && simRoundCountRef.current < 4) {
+        // ==========================================
+        // DYNAMIC WEIGHT-BASED AI DECISION MATRIX
+        // ==========================================
+        const choices: { id: string; score: number; data?: any }[] = [];
+        const localPlayerId = (multiplayerMode === "guest") ? guestId : 0;
+
+        // 1. Option: Cigarettes
+        const canCigarettes = bot.items.includes("cigarettes") && simRoundCountRef.current < 4 && bot.bp < 6;
+        if (canCigarettes) {
+          let score = 0;
+          if (bot.bp <= 2) score = 4.0;
+          else if (bot.bp === 3) score = 3.0;
+          else if (bot.bp === 4) score = 1.9;
+          else if (bot.bp === 5) score = 0.9;
+
+          if (bot.aiStyle === "cautious") score += 1.2;
+          if (bot.aiStyle === "aggressive") score -= 0.6;
+          choices.push({ id: "cigarettes", score });
+        }
+
+        // 2. Option: Expired Medicine
+        const canMedicine = bot.items.includes("expired-medicine") && simRoundCountRef.current < 4 && bot.bp < 6;
+        if (canMedicine) {
+          let score = 0;
+          if (bot.bp <= 2) score = 3.4;
+          else if (bot.bp === 3) score = 2.4;
+          else if (bot.bp === 4) score = 1.4;
+          else if (bot.bp === 5) score = 0.6;
+
+          if (bot.aiStyle === "cautious") score += 0.9;
+          choices.push({ id: "expired-medicine", score });
+        }
+
+        // 3. Option: Burner Phone
+        const canBurnerPhone = bot.items.includes("burner-phone") && botKnownTop === "unknown" && gunDeckRef.current.length > 0;
+        if (canBurnerPhone) {
+          let score = 1.4;
+          if (bot.items.length > 2) score += 0.6;
+          if (bot.aiStyle === "logical") score += 0.8;
+          choices.push({ id: "burner-phone", score });
+        }
+
+        // 4. Option: Magnifying Glass
+        const canMagnifyingGlass = bot.items.includes("magnifying-glass") && botKnownTop === "unknown" && gunDeckRef.current.length > 0;
+        if (canMagnifyingGlass) {
+          let score = 1.7;
+          if (bot.items.some(it => ["handsaw", "inverter", "coca"].includes(it))) score += 1.8;
+          if (gunDeckRef.current.length <= 2) score += 1.2;
+          if (bot.aiStyle === "logical") score += 0.9;
+          choices.push({ id: "magnifying-glass", score });
+        }
+
+        // 5. Option: Adrenaline
+        const canAdrenaline = bot.items.includes("adrenaline");
+        const potentialTargets = currentPlayers.filter(p => p.id !== bot.id && !p.isDead && p.items.some(it => it !== "adrenaline"));
+        if (canAdrenaline && potentialTargets.length > 0) {
+          let score = 1.2;
+          const hasCigAndLowHp = bot.bp <= 3 && potentialTargets.some(p => p.items.includes("cigarettes"));
+          if (hasCigAndLowHp) score += 2.2;
+          if (bot.aiStyle === "manipulative") score += 1.4;
+          choices.push({ id: "adrenaline", score });
+        }
+
+        // 6. Option: Inverter
+        const canInverter = bot.items.includes("inverter") && gunDeckRef.current.length > 0;
+        if (canInverter) {
+          let score = -999;
+          if (botKnownTop === "blank") {
+            score = 3.9;
+          } else if (botKnownTop === "unknown") {
+            const live = gunDeckRef.current.filter(b => b === "live").length;
+            const blank = gunDeckRef.current.filter(b => b === "blank").length;
+            if (blank > live) score = 1.2;
+            else score = 0.2;
+          }
+          if (bot.aiStyle === "logical" && botKnownTop === "blank") score += 0.5;
+          choices.push({ id: "inverter", score });
+        }
+
+        // 7. Option: Coca
+        const canCoca = bot.items.includes("coca") && gunDeckRef.current.length > 0;
+        if (canCoca) {
+          let score = -999;
+          if (botKnownTop === "blank") {
+            score = 3.5;
+          } else if (botKnownTop === "unknown") {
+            const live = gunDeckRef.current.filter(b => b === "live").length;
+            const blank = gunDeckRef.current.filter(b => b === "blank").length;
+            if (blank > live) score = 1.5;
+            else score = 0.4;
+          }
+          choices.push({ id: "coca", score });
+        }
+
+        // 8. Option: Handcuffs
+        const handcuffsTargetCandidates = currentPlayers.filter(p => p.id !== bot.id && !p.isDead && !p.skipNext);
+        const canHandcuffs = bot.items.includes("handcuffs") && handcuffsTargetCandidates.length > 0;
+        if (canHandcuffs) {
+          let score = 1.4;
+          const target = selectBotTarget(bot, handcuffsTargetCandidates);
+          if (target) {
+            if (target.id === localPlayerId) {
+              const userAggression = userMetricsRef.current.handsawPlays + userMetricsRef.current.othersShotsCount;
+              if (userAggression >= 2) score += 1.5; // lock down dangerous human!
+            }
+            if (bot.aiStyle === "aggressive") score += 0.6;
+            if (bot.aiStyle === "manipulative") score += 0.8;
+            choices.push({ id: "handcuffs", score, data: target });
+          }
+        }
+
+        // 9. Option: Handsaw
+        const canHandsaw = bot.items.includes("handsaw") && !handsawPlayedThisTurn && !handsawActiveRef.current && gunDeckRef.current.length > 0;
+        if (canHandsaw) {
+          let score = -999;
+          if (botKnownTop === "live") {
+            score = 4.2;
+          } else if (botKnownTop === "unknown") {
+            const live = gunDeckRef.current.filter(b => b === "live").length;
+            const blank = gunDeckRef.current.filter(b => b === "blank").length;
+            if (live >= blank) score = 2.1;
+            else score = 0.5;
+          }
+          if (bot.aiStyle === "aggressive") score += 0.8;
+          choices.push({ id: "handsaw", score });
+        }
+
+        // 10. Option: Shoot Self
+        if (gunDeckRef.current.length > 0) {
+          let score = -999;
+          if (botKnownTop === "blank") {
+            score = 4.6; // Absolute priority! Dry click keeps the turn stream going
+          } else if (botKnownTop === "unknown") {
+            const live = gunDeckRef.current.filter(b => b === "live").length;
+            const blank = gunDeckRef.current.filter(b => b === "blank").length;
+            if (blank > live) {
+              score = (blank / (live + blank)) * 2.4;
+            } else {
+              score = 0.1;
+            }
+            if (bot.aiStyle === "cautious") score += 0.6;
+            if (bot.aiStyle === "aggressive") score -= 0.6;
+          }
+          choices.push({ id: "shoot-self", score });
+        }
+
+        // 11. Option: Shoot Opponent
+        const shootTarget = selectBotTarget(bot, currentPlayers);
+        if (gunDeckRef.current.length > 0 && shootTarget) {
+          let score = -999;
+          if (botKnownTop === "live") {
+            score = 4.9; // absolute priority!
+          } else if (botKnownTop === "unknown") {
+            const live = gunDeckRef.current.filter(b => b === "live").length;
+            const blank = gunDeckRef.current.filter(b => b === "blank").length;
+            score = (live / (live + blank)) * 2.8;
+
+            // Target human base on their actions/movements!
+            if (shootTarget.id === localPlayerId) {
+              const userThreatLevel = userMetricsRef.current.handsawPlays * 1.5 + userMetricsRef.current.othersShotsCount;
+              if (userThreatLevel >= 3) score += 0.8; // prioritize neutralising high-threat user!
+            }
+            if (bot.aiStyle === "aggressive") score += 0.6;
+          }
+          choices.push({ id: "shoot-opponent", score, data: shootTarget });
+        }
+
+        // SORT AND SELECT THE HIGHEST VALUE STRATEGIC ACTION
+        choices.sort((a, b) => b.score - a.score);
+        const bestChoice = choices[0];
+
+        if (!bestChoice || bestChoice.score <= -500) {
+          isActing = false;
+          break;
+        }
+
+        // ==========================================
+        // EXECUTE SELECTED STRATEGIC CHOICE
+        // ==========================================
+        if (bestChoice.id === "cigarettes") {
           setBotActionText(`${bot.name} is smoking standard cigarettes to soothe the nerves (+1 BP)...`);
           await sleep(1600);
           executeItemOnSimulator(bot.id, "cigarettes");
@@ -853,7 +1056,7 @@ export default function Home() {
           continue;
         }
 
-        if (bot.bp <= 4 && bot.items.includes("expired-medicine") && simRoundCountRef.current < 4) {
+        if (bestChoice.id === "expired-medicine") {
           setBotActionText(`${bot.name} is gambling on an expired-medicine bottle...`);
           await sleep(1600);
           executeItemOnSimulator(bot.id, "expired-medicine");
@@ -861,11 +1064,9 @@ export default function Home() {
           continue;
         }
 
-        // 4. Information Gathering
-        if (bot.items.includes("burner-phone") && botKnownTop === "unknown") {
+        if (bestChoice.id === "burner-phone") {
           setBotActionText(`${bot.name} is picking up a Burner Phone 📱...`);
           await sleep(1600);
-          
           const diceRoll = Math.floor(getPureRandom() * 6) + 1;
           if (gunDeckRef.current.length > 0) {
             const checkIdx = diceRoll - 1 < gunDeckRef.current.length ? diceRoll - 1 : gunDeckRef.current.length - 1;
@@ -883,13 +1084,11 @@ export default function Home() {
           continue;
         }
 
-        if (bot.items.includes("magnifying-glass") && botKnownTop === "unknown") {
+        if (bestChoice.id === "magnifying-glass") {
           setBotActionText(`${bot.name} is looking through the magnifying glass to inspect next cylinder...`);
           await sleep(1600);
-          
           const topBullet = gunDeckRef.current[0];
           botKnownTop = topBullet;
-          
           executeItemOnSimulator(bot.id, "magnifying-glass");
           setBotCaterDialogue({
             name: bot.name,
@@ -899,21 +1098,17 @@ export default function Home() {
           continue;
         }
 
-        // 4.5. Adrenaline Surge check
-        if (bot.items.includes("adrenaline")) {
-          const potentialTargets = currentPlayers.filter(p => p.id !== bot.id && !p.isDead && p.items.some(it => it !== "adrenaline"));
-          if (potentialTargets.length > 0) {
-            setBotActionText(`${bot.name} injects Adrenaline 💉 to extract an item from an opponent's deck...`);
-            await sleep(1600);
-            executeItemOnSimulator(bot.id, "adrenaline");
-            await sleep(1500);
-            continue;
-          }
+        if (bestChoice.id === "adrenaline") {
+          const victim = bestChoice.data || potentialTargets[0];
+          setBotActionText(`${bot.name} injects Adrenaline 💉 to extract an item from ${victim.name}'s hand...`);
+          await sleep(1600);
+          executeItemOnSimulator(bot.id, "adrenaline");
+          await sleep(1500);
+          continue;
         }
 
-        // 4.6. Strategic Inverter check
-        if (bot.items.includes("inverter") && botKnownTop === "blank") {
-          setBotActionText(`${bot.name} installs an Inverter 🔄 to flip the known Blank into a Live golden bullet...`);
+        if (bestChoice.id === "inverter") {
+          setBotActionText(`${bot.name} installs an Inverter 🔄 to flip the Blank into a Live gold shell...`);
           await sleep(1600);
           executeItemOnSimulator(bot.id, "inverter");
           botKnownTop = "live";
@@ -921,42 +1116,25 @@ export default function Home() {
           continue;
         }
 
-        // 4.7. Strategic Coca check (cycles blank bullets out or takes 30% chance to cycle if unknown)
-        if (bot.items.includes("coca")) {
-          if (botKnownTop === "blank") {
-            setBotActionText(`${bot.name} chugs a cold Coca 🥤 to cycle out the known Blank bullet directly...`);
-            await sleep(1600);
-            executeItemOnSimulator(bot.id, "coca");
-            botKnownTop = "unknown";
-            await sleep(1500);
-            continue;
-          } else if (botKnownTop === "unknown" && getPureRandom() < 0.3) {
-            setBotActionText(`${bot.name} pops open Coca 🥤 to cycle the unrevealed top bullet into the spent tray...`);
-            await sleep(1600);
-            executeItemOnSimulator(bot.id, "coca");
-            botKnownTop = "unknown";
-            await sleep(1500);
-            continue;
-          }
+        if (bestChoice.id === "coca") {
+          setBotActionText(`${bot.name} chugs open a Coca 🥤 to cycle out the blank bullet unseen...`);
+          await sleep(1600);
+          executeItemOnSimulator(bot.id, "coca");
+          botKnownTop = "unknown";
+          await sleep(1500);
+          continue;
         }
 
-        // 5. Apply constraint handcuffs to priority target
-        if (bot.items.includes("handcuffs")) {
-          const nonHandcuffedPlayers = currentPlayers.filter(p => p.id !== bot.id && !p.isDead && !p.skipNext);
-          if (nonHandcuffedPlayers.length > 0) {
-            const target = selectBotTarget(bot, nonHandcuffedPlayers);
-            if (target) {
-              setBotActionText(`${bot.name} is locking handcuffs on ${target.name} to restrict actions...`);
-              await sleep(1600);
-              executeItemOnSimulator(bot.id, "handcuffs", target.id);
-              await sleep(1500);
-              continue;
-            }
-          }
+        if (bestChoice.id === "handcuffs") {
+          const target = bestChoice.data;
+          setBotActionText(`${bot.name} is locking handcuffs on ${target.name} to lock their next turn skip...`);
+          await sleep(1600);
+          executeItemOnSimulator(bot.id, "handcuffs", target.id);
+          await sleep(1500);
+          continue;
         }
 
-        // 6. Double dmg next Live round using handsaw
-        if (bot.items.includes("handsaw") && !handsawPlayedThisTurn && !handsawActiveRef.current && botKnownTop === "live") {
+        if (bestChoice.id === "handsaw") {
           setBotActionText(`${bot.name} is mounting a handsaw onto the barrel (deals 2 damage next Live shot)...`);
           await sleep(1600);
           executeItemOnSimulator(bot.id, "handsaw");
@@ -965,45 +1143,29 @@ export default function Home() {
           continue;
         }
 
-        // 7. Fire! Determine ideal target
-        const opponent = selectBotTarget(bot, currentPlayers);
-        if (!opponent) {
-          isActing = false;
-          break;
-        }
-
+        // --- FIRING ACTION EXECUTION ---
         let isSelfGamble = false;
-        let finalTargetId = opponent.id;
-
-        if (botKnownTop === "live") {
-          finalTargetId = opponent.id;
-          setBotActionText(`${bot.name} holds unwavering gaze and fires output on ${opponent.name}!`);
-        } else if (botKnownTop === "blank") {
+        let finalTargetId = bot.id;
+        if (bestChoice.id === "shoot-self") {
           finalTargetId = bot.id;
           isSelfGamble = true;
-          setBotActionText(`${bot.name} points the gun inwards. Dry click preserves their turn!`);
-        } else {
-          // General gamble of density directly from ref to prevent stale status
-          const currentDeck = gunDeckRef.current;
-          const li = currentDeck.filter(b => b === "live").length;
-          const bl = currentDeck.filter(b => b === "blank").length;
-          // If blank probability feels higher, high chance to shoot self
-          if (bl > li && getPureRandom() > 0.4) {
-            finalTargetId = bot.id;
-            isSelfGamble = true;
-            setBotActionText(`${bot.name} riskfully targets themselves to sustain turn flow...`);
+          if (botKnownTop === "blank") {
+            setBotActionText(`${bot.name} points the barrel inwards. Dry click preserves their turn!`);
           } else {
-            finalTargetId = opponent.id;
-            setBotActionText(`${bot.name} raises barrel and targets ${opponent.name}!`);
+            setBotActionText(`${bot.name} riskfully points the heavy barrel inwards to sustain turn flow...`);
           }
+        } else {
+          const target = bestChoice.data;
+          finalTargetId = target.id;
+          setBotActionText(`${bot.name} raises the gun and targets ${target.name}!`);
         }
 
-        // Immersion & Realism delay: Suspenseful random 5 to 10 seconds sequence before taking the shot!
-        const totalDurationMs = 5000 + Math.floor(getPureRandom() * 5000);
+        // Immersion & Suspense delay (Randomized 4-7 seconds before bullet ignition)
+        const totalDurationMs = 4000 + Math.floor(getPureRandom() * 3000);
         const stepsCount = 4;
         const stepDelay = Math.floor(totalDurationMs / stepsCount);
 
-        setBotActionText(`🎯 ${bot.name} is holding unwavering gaze at target... (Calculating Decision: ${(totalDurationMs / 1000).toFixed(1)}s remaining)`);
+        setBotActionText(`🎯 ${bot.name} is holding unwavering gaze at target... (Calculating: ${(totalDurationMs / 1000).toFixed(1)}s remaining)`);
         await sleep(stepDelay);
         setBotActionText(`⚙️ ${bot.name} is raising the heavy barrel, feeling the cold steel... (Suspense: ${((totalDurationMs - stepDelay) / 1000).toFixed(1)}s remaining)`);
         await sleep(stepDelay);
@@ -1017,9 +1179,9 @@ export default function Home() {
 
         if (shotResult === "blank" && finalTargetId === bot.id) {
           addSimLog(`🤖 ${bot.name} retains their turn after surviving a self-shot Blank.`);
-          continue; // Keep acting and loop!
+          continue; // keep acting and loop!
         }
-        
+
         isActing = false; // Turn concludes after shooting
       }
     } catch (e) {
@@ -1097,6 +1259,15 @@ export default function Home() {
     const shooter = currentPlayers.find(p => p.id === shooterId)!;
     const target = currentPlayers.find(p => p.id === targetId)!;
     const isSelfShoot = shooterId === targetId;
+
+    const localPlId = (multiplayerMode === "guest") ? guestId : 0;
+    if (shooterId === localPlId) {
+      if (isSelfShoot) {
+        userMetricsRef.current.selfShotsCount += 1;
+      } else {
+        userMetricsRef.current.othersShotsCount += 1;
+      }
+    }
 
     let dmg = handsawActiveRef.current ? 2 : 1;
     setHandsawActiveSync(false);
@@ -1279,10 +1450,21 @@ export default function Home() {
 
   // --- PLAY ITEM ENGINE ---
   function executeItemOnSimulator(playerId: number, itemId: string, additionalTargetId?: number) {
-    // Use interactive selection interceptors for Player 0 (You)
-    if (playerId === 0) {
+    const localPlayerId = (multiplayerMode === "guest") ? guestId : 0;
+
+    // Record user metrics
+    if (playerId === localPlayerId) {
+      if (itemId === "handsaw" || itemId === "handcuffs") {
+        userMetricsRef.current.handsawPlays += 1;
+      } else if (itemId === "cigarettes" || itemId === "expired-medicine") {
+        userMetricsRef.current.healingPlays += 1;
+      }
+    }
+
+    // Use interactive selection interceptors for Player (You)
+    if (playerId === localPlayerId) {
       if (itemId === "handcuffs" && additionalTargetId === undefined) {
-        const livingOpponents = simPlayersRef.current.filter(p => p.id !== 0 && !p.isDead);
+        const livingOpponents = simPlayersRef.current.filter(p => p.id !== localPlayerId && !p.isDead);
         if (livingOpponents.length === 0) {
           addSimLog("❌ No living opponents to handcuff!");
           return;
@@ -1293,7 +1475,7 @@ export default function Home() {
       }
       if (itemId === "adrenaline" && additionalTargetId === undefined) {
         const potentialVictims = simPlayersRef.current.filter(
-          p => p.id !== 0 && !p.isDead && p.items.some(it => it !== "adrenaline")
+          p => p.id !== localPlayerId && !p.isDead && p.items.some(it => it !== "adrenaline")
         );
         if (potentialVictims.length === 0) {
           addSimLog("❌ No opponents hold stealable items (excludes Adrenaline)!");
@@ -1397,7 +1579,7 @@ export default function Home() {
         break;
 
       case "handcuffs": {
-        const targetId = additionalTargetId !== undefined ? additionalTargetId : (playerId === 0 ? 1 : 0);
+        const targetId = additionalTargetId !== undefined ? additionalTargetId : (playerId === localPlayerId ? (localPlayerId === 0 ? 1 : 0) : localPlayerId);
         setSimPlayersSync(prev => prev.map(p => {
           if (p.id === targetId) return { ...p, skipNext: true };
           return p;
@@ -1405,7 +1587,7 @@ export default function Home() {
         const targetPl = simPlayersRef.current.find(p => p.id === targetId);
         addSimLog(`🔗 Constraints locked targets skip list on ${targetPl?.name}`);
         triggerAudio("chains");
-        if (playerId === 0) {
+        if (playerId === localPlayerId) {
           setUserHandcuffsPending(false);
         }
         setActiveItemEffect(prev => prev ? { ...prev, outcome: targetPl?.name || "Target" } : null);
