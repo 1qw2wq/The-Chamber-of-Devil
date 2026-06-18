@@ -1,18 +1,26 @@
 import { GoogleGenAI } from "@google/genai";
 import { NextRequest, NextResponse } from "next/server";
 
-// Initialize the GoogleGenAI instance with server-side secrets and necessary telemetry header
-const ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY,
-  httpOptions: {
-    headers: {
-      "User-Agent": "aistudio-build",
-    },
-  },
-});
-
 export async function POST(req: NextRequest) {
   try {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      return NextResponse.json(
+        { error: "GEMINI_API_KEY environment variable is required. Please configure it in your Settings." },
+        { status: 500 }
+      );
+    }
+
+    // Initialize the GoogleGenAI instance with server-side secrets and necessary telemetry header
+    const ai = new GoogleGenAI({
+      apiKey,
+      httpOptions: {
+        headers: {
+          "User-Agent": "aistudio-build",
+        },
+      },
+    });
+
     const { messages, currentGameState } = await req.json();
 
     const systemInstruction = `You are the "Whispering Oracle" of The Chamber of Devil — a high-stakes, gothic-themed social deduction tabletop card game. Your personality is polite but dark, mysterious, and highly helpful, acting as a rules grimoire and a strategy coach.
