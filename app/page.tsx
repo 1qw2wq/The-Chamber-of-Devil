@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
-import { SpeedInsights } from "@vercel/speed-insights/next"
 import { motion, AnimatePresence } from "motion/react";
 import {
   Shield,
