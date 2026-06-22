@@ -1,4 +1,5 @@
 import type {Metadata} from 'next';
+import { Analytics } from '@vercel/analytics/react';
 import { Inter, Cinzel } from 'next/font/google';
 import './globals.css'; // Global styles
 
@@ -23,6 +24,7 @@ export default function RootLayout({children}: {children: React.ReactNode}) {
     <html lang="en" className={`${inter.variable} ${cinzel.variable}`} suppressHydrationWarning>
       <body className="bg-[#0a0a0b] text-[#f1f3f5] font-sans antialiased selection:bg-red-900 selection:text-white" suppressHydrationWarning>
         {children}
+        <Analytics />
       </body>
     </html>
   );
